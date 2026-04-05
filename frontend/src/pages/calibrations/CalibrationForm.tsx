@@ -250,10 +250,12 @@ export default function CalibrationForm() {
             setPressureRows(measurements.map(m => ({
               pct: m.standard_value ?? 0,
               standardValue: m.standard_value ?? 0,
+              asFound: m.measured_value != null ? String(m.measured_value) : '',
               asLeft: m.measured_value != null ? String(m.measured_value) : '',
             })))
           } else if (type.includes('temperature')) {
             setTemperatureRows(measurements.map(m => ({
+              id: m.id ?? crypto.randomUUID(),
               label: m.point_label,
               reference: m.standard_value != null ? String(m.standard_value) : '',
               measured: m.measured_value != null ? String(m.measured_value) : '',
@@ -306,12 +308,14 @@ export default function CalibrationForm() {
         template.points.map((p, i) => ({
           pct: p.standard_value ?? i * 25,
           standardValue: p.standard_value ?? 0,
+          asFound: '',
           asLeft: '',
         })),
       )
     } else if (type.includes('temperature')) {
       setTemperatureRows(
         template.points.map((p) => ({
+          id: crypto.randomUUID(),
           label: p.label,
           reference: p.standard_value !== null ? String(p.standard_value) : '',
           measured: '',

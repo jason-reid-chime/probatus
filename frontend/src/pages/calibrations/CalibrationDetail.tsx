@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
@@ -170,6 +170,7 @@ function useSyncStatus(recordId: string) {
 // ---------------------------------------------------------------------------
 export default function CalibrationDetail() {
   const { recordId } = useParams<{ recordId: string }>()
+  const navigate = useNavigate()
   const { profile } = useAuth()
 
   const {
@@ -262,7 +263,6 @@ export default function CalibrationDetail() {
   const performedAt = new Date(record.performed_at).toLocaleString()
   const canSubmit = record.status === 'in_progress'
   const canApprove = record.status === 'pending_approval' && (profile?.role === 'supervisor' || profile?.role === 'admin')
-  const canGenerateCert = record.status === 'approved'
   const canGeneratePdf = record.status === 'approved'
 
   async function handleApprove() {

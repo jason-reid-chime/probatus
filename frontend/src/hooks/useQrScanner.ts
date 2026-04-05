@@ -7,7 +7,7 @@ import { Html5Qrcode } from 'html5-qrcode'
 // Calls onResult with the raw decoded string on a successful scan.
 // ---------------------------------------------------------------------------
 export function useQrScanner(onResult: (tagId: string) => void): {
-  scannerRef: React.RefObject<HTMLDivElement>
+  scannerRef: React.RefObject<HTMLDivElement | null>
   startScanner: () => void
   stopScanner: () => void
   isScanning: boolean

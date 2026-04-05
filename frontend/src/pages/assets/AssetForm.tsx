@@ -166,7 +166,7 @@ export default function AssetForm() {
     reset,
     formState: { errors },
   } = useForm<AssetFormValues>({
-    resolver: zodResolver(assetSchema),
+    resolver: zodResolver(assetSchema) as any,
     defaultValues: {
       instrument_type: 'pressure',
       calibration_interval_days: 365,

@@ -28,7 +28,7 @@ const schema = z.object({
     'other',
   ]),
   tolerance_pct: z
-    .number({ invalid_type_error: 'Must be a number' })
+    .number({ message: 'Must be a number' })
     .min(0, 'Must be ≥ 0')
     .max(100, 'Must be ≤ 100'),
   points: z
@@ -96,7 +96,6 @@ export default function TemplateForm() {
     register,
     handleSubmit,
     watch,
-    setValue,
     reset,
     control,
     formState: { errors, isSubmitting },

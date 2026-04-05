@@ -129,7 +129,7 @@ export function useUpsertAsset() {
       return { previous }
     },
 
-    onError: (_err, newAsset, context) => {
+    onError: (_err, _newAsset, context) => {
       // Roll back
       if (context?.previous) {
         queryClient.setQueryData(assetKeys.all(tenantId), context.previous)

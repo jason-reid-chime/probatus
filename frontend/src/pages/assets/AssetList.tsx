@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { QrCode, Plus, Search, X, Loader2, ClipboardList } from 'lucide-react'
+import { QrCode, Plus, Search, X, ClipboardList } from 'lucide-react'
 import { useAssets } from '../../hooks/useAssets'
 import { useQrScanner } from '../../hooks/useQrScanner'
 import type { LocalAsset } from '../../lib/db'

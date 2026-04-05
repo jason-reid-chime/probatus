@@ -13,7 +13,7 @@ import {
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
-import { isOnline, toggleForcedOffline, isForcedOffline } from '../../lib/sync/connectivity'
+import { isOnline, toggleForcedOffline } from '../../lib/sync/connectivity'
 
 interface SidebarProps {
   onClose?: () => void
@@ -91,7 +91,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const visibleItems = navItems.filter((item) => {
     if (!item.roles) return true
     if (!profile) return false
-    return item.roles.includes(profile.role)
+    return item.roles.includes(profile.role as 'technician' | 'supervisor' | 'admin')
   })
 
   return (
