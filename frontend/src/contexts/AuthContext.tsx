@@ -20,6 +20,7 @@ interface AuthContextValue {
   refreshProfile: () => Promise<void>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const AuthContext = createContext<AuthContextValue | null>(null)
 
 async function fetchProfile(userId: string): Promise<Profile | null> {
@@ -103,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuthContext(): AuthContextValue {
   const ctx = useContext(AuthContext)
   if (!ctx) {

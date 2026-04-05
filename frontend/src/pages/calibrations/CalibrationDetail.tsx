@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
 import { API_URL } from '../../lib/api/client'
 import { useAuth } from '../../hooks/useAuth'
-import { db } from '../../lib/db'
+import { db, type LocalCalibrationRecord } from '../../lib/db'
 import { enqueue } from '../../lib/sync/outbox'
 import { overallResult } from '../../utils/calibrationMath'
 import type { LocalMeasurement } from '../../lib/db'
@@ -281,7 +281,7 @@ export default function CalibrationDetail() {
       if (!res.ok) throw new Error(`Server returned ${res.status}`)
       // Update Dexie so status persists on next visit
       await db.calibration_records.update(recordId, { status: 'approved' })
-      queryClient.setQueryData(calibrationKeys.detail(recordId), (old: any) =>
+      queryClient.setQueryData(calibrationKeys.detail(recordId), (old: LocalCalibrationRecord | undefined) =>
         old ? { ...old, status: 'approved' } : old
       )
     } catch (err) {

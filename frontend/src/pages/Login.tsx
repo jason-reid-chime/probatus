@@ -84,7 +84,7 @@ export default function Login() {
 
       setSignupSuccess(true)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : (err as any)?.message ?? JSON.stringify(err)
+      const msg = err instanceof Error ? err.message : (typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err))
       setServerError(msg || 'Sign up failed. Please try again.')
     }
   }

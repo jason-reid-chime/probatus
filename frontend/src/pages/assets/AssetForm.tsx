@@ -172,7 +172,8 @@ export default function AssetForm() {
     reset,
     formState: { errors },
   } = useForm<AssetFormValues>({
-    resolver: zodResolver(assetSchema) as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(assetSchema) as any, // zod v4 / react-hook-form type mismatch
     defaultValues: {
       instrument_type: 'pressure',
       calibration_interval_days: 365,
@@ -255,7 +256,7 @@ export default function AssetForm() {
       })
       navigate(`/assets/${saved.id}`, { replace: true })
     } catch (err: unknown) {
-      const msg = (err as any)?.message ?? (err instanceof Error ? err.message : JSON.stringify(err))
+      const msg = err instanceof Error ? err.message : (typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err))
       setServerError(msg || 'Failed to save asset.')
     }
   }
