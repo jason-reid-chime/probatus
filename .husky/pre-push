@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Runs on git push. Blocks the push if coverage drops below the stored baseline.
+./scripts/check-coverage.sh

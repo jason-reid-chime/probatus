@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs on git commit.
+# Typecheck is fast and catches regressions immediately.
+# Full lint runs in CI (there are pre-existing lint warnings to clean up separately).
+cd frontend && npx tsc -b --noEmit

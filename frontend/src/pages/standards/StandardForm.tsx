@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
+import { useForm, type UseFormRegister, type FieldErrors } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ArrowLeft } from 'lucide-react'
@@ -24,6 +24,37 @@ const schema = z
   })
 
 type FormValues = z.infer<typeof schema>
+
+// ---------------------------------------------------------------------------
+// Field — defined outside StandardForm so React's reconciler treats it as
+// a stable component (avoids react-hooks/static-components warning)
+// ---------------------------------------------------------------------------
+function Field({
+  label, name, type = 'text', required = false, register, errors,
+}: {
+  label: string
+  name: keyof FormValues
+  type?: string
+  required?: boolean
+  register: UseFormRegister<FormValues>
+  errors: FieldErrors<FormValues>
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="block text-sm font-medium text-gray-700">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      <input
+        {...register(name)}
+        type={type}
+        className="w-full border border-gray-300 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+      />
+      {errors[name] && (
+        <p className="text-sm text-red-600">{errors[name]?.message as string}</p>
+      )}
+    </div>
+  )
+}
 
 export default function StandardForm() {
   const navigate = useNavigate()
@@ -75,29 +106,6 @@ export default function StandardForm() {
     navigate('/standards')
   }
 
-  const Field = ({
-    label, name, type = 'text', required = false,
-  }: {
-    label: string
-    name: keyof FormValues
-    type?: string
-    required?: boolean
-  }) => (
-    <div className="space-y-1">
-      <label className="block text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
-      <input
-        {...register(name)}
-        type={type}
-        className="w-full border border-gray-300 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
-      />
-      {errors[name] && (
-        <p className="text-sm text-red-600">{errors[name]?.message as string}</p>
-      )}
-    </div>
-  )
-
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -115,20 +123,20 @@ export default function StandardForm() {
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
         <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identification</h2>
-          <Field label="Name" name="name" required />
+          <Field label="Name" name="name" required register={register} errors={errors} />
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Serial Number" name="serial_number" required />
-            <Field label="Model" name="model" />
+            <Field label="Serial Number" name="serial_number" required register={register} errors={errors} />
+            <Field label="Model" name="model" register={register} errors={errors} />
           </div>
-          <Field label="Manufacturer" name="manufacturer" />
-          <Field label="Certificate Reference" name="certificate_ref" />
+          <Field label="Manufacturer" name="manufacturer" register={register} errors={errors} />
+          <Field label="Certificate Reference" name="certificate_ref" register={register} errors={errors} />
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Calibration Dates</h2>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="Calibrated At" name="calibrated_at" type="date" required />
-            <Field label="Due At" name="due_at" type="date" required />
+            <Field label="Calibrated At" name="calibrated_at" type="date" required register={register} errors={errors} />
+            <Field label="Due At" name="due_at" type="date" required register={register} errors={errors} />
           </div>
         </div>
 

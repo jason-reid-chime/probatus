@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { CheckCircle, XCircle, Plus, Trash2 } from 'lucide-react'
 
 // Common conductivity standard solutions

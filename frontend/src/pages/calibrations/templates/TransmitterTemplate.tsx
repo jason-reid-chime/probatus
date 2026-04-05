@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { CheckCircle, XCircle } from 'lucide-react'
 import type { LocalAsset } from '../../../lib/db'
 import { calcErrorPct, calc4_20mAErrorPct, isPass } from '../../../utils/calibrationMath'

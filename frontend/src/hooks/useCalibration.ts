@@ -155,14 +155,24 @@ export function useSaveCalibration() {
         })
       }
 
-      // 4. Attempt online sync opportunistically — skip entirely if offline
+      // 4. Attempt online sync opportunistically — skip entirely if offline.
+      //    Wrap in a 5-second timeout so airplane-mode (where navigator.onLine
+      //    briefly stays true) doesn't cause the save to hang.
       if (isOnline()) {
         try {
-          const saved = await upsertCalibrationRecord(record)
-          await upsertMeasurements(measurements)
+          const withTimeout = <T>(p: Promise<T>): Promise<T> =>
+            Promise.race([
+              p,
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('sync-timeout')), 5000),
+              ),
+            ])
+
+          const saved = await withTimeout(upsertCalibrationRecord(record))
+          await withTimeout(upsertMeasurements(measurements))
           return saved
         } catch {
-          // Network error despite onLine — outbox will retry
+          // Network error or timeout — outbox will retry when back online
         }
       }
       return record

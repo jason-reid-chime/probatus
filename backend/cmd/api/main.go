@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
@@ -22,22 +23,29 @@ import (
 )
 
 func main() {
-	// Required environment variables:
-	//   DATABASE_URL        — PostgreSQL connection string
-	//   SUPABASE_JWT_SECRET — JWT secret for verifying Supabase-issued tokens
-	//   GOTENBERG_URL       — Gotenberg HTML-to-PDF service base URL (default: http://localhost:3000)
-	//   RESEND_API_KEY      — Resend API key for automated certificate email delivery
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
+	// Initialise Sentry — no-op when SENTRY_DSN is unset.
+	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              dsn,
+			Environment:      os.Getenv("RAILWAY_ENVIRONMENT"), // "production" on Railway
+			TracesSampleRate: 0.1,
+		}); err != nil {
+			slog.Warn("Sentry init failed", "error", err)
+		} else {
+			slog.Info("Sentry initialised")
+		}
+	}
+
 	ctx := context.Background()
 
-	// Connect to PostgreSQL.
 	pool, err := db.NewPool(ctx)
 	if err != nil {
+		sentry.CaptureException(err)
 		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
@@ -54,10 +62,10 @@ func main() {
 
 	r := chi.NewRouter()
 
-	// Global middleware.
-	r.Use(chimiddleware.Logger)
-	r.Use(chimiddleware.Recoverer)
-	r.Use(chimiddleware.RequestID)
+	// Global middleware — order matters.
+	r.Use(chimiddleware.RequestID)  // attach X-Request-Id early so logger picks it up
+	r.Use(middleware.RequestLogger) // structured slog request logging
+	r.Use(middleware.Recoverer)     // Sentry-aware panic recovery (replaces chimiddleware.Recoverer)
 	r.Use(middleware.CORS)
 
 	// Public routes.
@@ -108,6 +116,7 @@ func main() {
 
 	slog.Info("Probatus API starting", "port", port)
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), r); err != nil {
+		sentry.CaptureException(err)
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
