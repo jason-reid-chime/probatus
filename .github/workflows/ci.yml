@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend — lint + typecheck + test + coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: TypeScript check
+        run: npx tsc -b --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Coverage
+        run: npm run test:coverage
+
+      - name: Enforce coverage does not decrease
+        run: |
+          CURRENT=$(node -e "
+            const s = require('./coverage/coverage-summary.json');
+            process.stdout.write(String(s.total.lines.pct));
+          ")
+          BASELINE=$(cat ../.frontend-coverage-baseline 2>/dev/null || echo "0")
+          echo "Coverage: ${CURRENT}%  Baseline: ${BASELINE}%"
+          python3 -c "
+          current = float('${CURRENT}')
+          baseline = float('${BASELINE}')
+          if current < baseline:
+              raise SystemExit(f'Coverage dropped from {baseline}% to {current}%')
+          "
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: https://probatus-api-production.up.railway.app
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend — build + vet + test + coverage
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: backend/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Coverage
+        run: go test ./... -coverprofile=coverage.out -covermode=atomic -count=1
+
+      - name: Enforce coverage does not decrease
+        run: |
+          CURRENT=$(go tool cover -func=coverage.out | grep '^total:' | awk '{gsub(/%/,"",$3); print $3}')
+          BASELINE=$(cat ../.backend-coverage-baseline 2>/dev/null || echo "0")
+          echo "Coverage: ${CURRENT}%  Baseline: ${BASELINE}%"
+          python3 -c "
+          current = float('${CURRENT}')
+          baseline = float('${BASELINE}')
+          if current < baseline:
+              raise SystemExit(f'Coverage dropped from {baseline}% to {current}%')
+          "

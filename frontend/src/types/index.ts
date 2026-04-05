@@ -9,7 +9,7 @@ export interface CalibrationTemplate {
   tenant_id: string
   name: string
   description?: string
-  instrument_type: 'pressure' | 'temperature' | 'ph_conductivity' | 'level_4_20ma' | 'other'
+  instrument_type: 'pressure' | 'temperature' | 'ph_conductivity' | 'conductivity' | 'level_4_20ma' | 'flow' | 'transmitter_4_20ma' | 'pressure_switch' | 'temperature_switch' | 'other'
   tolerance_pct: number
   points: TemplatePoint[]
   created_by?: string

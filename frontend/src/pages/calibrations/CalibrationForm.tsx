@@ -26,6 +26,18 @@ import LevelTemplate, {
   buildDefaultLevelRows,
   type LevelRow,
 } from './templates/LevelTemplate'
+import SwitchTemplate, {
+  buildDefaultSwitchData,
+  type SwitchData,
+} from './templates/SwitchTemplate'
+import ConductivityTemplate, {
+  buildDefaultConductivityData,
+  type ConductivityData,
+} from './templates/ConductivityTemplate'
+import TransmitterTemplate, {
+  buildDefaultTransmitterRows,
+  type TransmitterRow,
+} from './templates/TransmitterTemplate'
 
 // ---------------------------------------------------------------------------
 // Toast — minimal local implementation
@@ -149,6 +161,107 @@ function levelMeasurements(
   })
 }
 
+function switchMeasurements(
+  recordId: string,
+  data: SwitchData,
+  asset: LocalAsset,
+): LocalMeasurement[] {
+  const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
+  const setpointNum = parseFloat(data.setpoint)
+  const tolerancePct = parseFloat(data.tolerancePct) || 2
+  const unit = asset.range_unit
+  const ms: LocalMeasurement[] = []
+
+  const addRow = (label: string, asLeftStr: string) => {
+    const val = parseFloat(asLeftStr)
+    if (asLeftStr === '' || isNaN(val) || isNaN(setpointNum)) return
+    const errPct = span > 0 ? Math.abs(val - setpointNum) / span * 100 : 0
+    ms.push({
+      id: crypto.randomUUID(),
+      record_id: recordId,
+      point_label: label,
+      standard_value: setpointNum,
+      measured_value: val,
+      unit,
+      error_pct: errPct,
+      pass: errPct <= tolerancePct,
+    })
+  }
+
+  addRow('Trip (Rising)', data.asLeftTrip)
+  addRow('Reset (Falling)', data.asLeftReset)
+  return ms
+}
+
+function conductivityMeasurements(
+  recordId: string,
+  data: ConductivityData,
+): LocalMeasurement[] {
+  const tolerancePct = parseFloat(data.tolerancePct) || 2
+  return data.standards
+    .filter(s => s.nominal !== '' && s.reading !== '')
+    .map(s => {
+      const nominal = parseFloat(s.nominal)
+      const reading = parseFloat(s.reading)
+      if (isNaN(nominal) || isNaN(reading)) return null
+      const errPct = nominal > 0 ? Math.abs(reading - nominal) / nominal * 100 : 0
+      const notes = [s.lotNumber && `Lot: ${s.lotNumber}`, s.expiry && `Exp: ${s.expiry}`].filter(Boolean).join(' ') || undefined
+      return {
+        id: crypto.randomUUID(),
+        record_id: recordId,
+        point_label: `${s.nominal} ${data.unit}`,
+        standard_value: nominal,
+        measured_value: reading,
+        unit: data.unit as string,
+        error_pct: errPct,
+        pass: errPct <= tolerancePct,
+        notes,
+      } as LocalMeasurement
+    })
+    .filter((m): m is NonNullable<typeof m> => m !== null) as LocalMeasurement[]
+}
+
+function transmitterMeasurements(
+  recordId: string,
+  rows: TransmitterRow[],
+): LocalMeasurement[] {
+  const ms: LocalMeasurement[] = []
+  for (const row of rows) {
+    const pvNum = parseFloat(row.pvAsLeft)
+    const maNum = parseFloat(row.maAsLeft)
+    const hasPV = row.pvAsLeft !== '' && !isNaN(pvNum)
+    const hasMA = row.maAsLeft !== '' && !isNaN(maNum)
+
+    if (hasPV) {
+      const errPct = calcErrorPct(row.appliedValue, pvNum)
+      ms.push({
+        id: crypto.randomUUID(),
+        record_id: recordId,
+        point_label: `${row.pct}% PV`,
+        standard_value: row.appliedValue,
+        measured_value: pvNum,
+        error_pct: isFinite(errPct) ? errPct : undefined,
+        pass: isFinite(errPct) ? isPass(errPct) : undefined,
+      })
+    }
+    if (hasMA) {
+      const expMA = 4 + (row.pct / 100) * 16
+      const errPct = calc4_20mAErrorPct(row.pct, maNum)
+      ms.push({
+        id: crypto.randomUUID(),
+        record_id: recordId,
+        point_label: `${row.pct}% mA`,
+        standard_value: expMA,
+        measured_value: maNum,
+        unit: 'mA',
+        error_pct: isFinite(errPct) ? errPct : undefined,
+        pass: isFinite(errPct) ? isPass(errPct) : undefined,
+      })
+    }
+  }
+  return ms
+}
+
 // ---------------------------------------------------------------------------
 // Result banner
 // ---------------------------------------------------------------------------
@@ -204,6 +317,9 @@ export default function CalibrationForm() {
   const [levelRows, setLevelRows] = useState<LevelRow[]>(
     buildDefaultLevelRows(),
   )
+  const [switchData, setSwitchData] = useState<SwitchData>(buildDefaultSwitchData())
+  const [conductivityData, setConductivityData] = useState<ConductivityData>(buildDefaultConductivityData())
+  const [transmitterRows, setTransmitterRows] = useState<TransmitterRow[]>([])
 
   const [toast, setToast] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -231,7 +347,10 @@ export default function CalibrationForm() {
       }
 
       setAsset(a ?? null)
-      if (a) setPressureRows(buildDefaultPressureRows(a))
+      if (a) {
+        setPressureRows(buildDefaultPressureRows(a))
+        setTransmitterRows(buildDefaultTransmitterRows(a))
+      }
 
       if (existingRecordId) {
         // Load existing record header fields
@@ -246,25 +365,63 @@ export default function CalibrationForm() {
           .where('record_id').equals(existingRecordId).toArray()
         if (measurements.length > 0 && a) {
           const type = a.instrument_type?.toLowerCase() ?? ''
-          if (type.includes('pressure')) {
+          if (type === 'pressure') {
             setPressureRows(measurements.map(m => ({
               pct: m.standard_value ?? 0,
               standardValue: m.standard_value ?? 0,
               asFound: m.measured_value != null ? String(m.measured_value) : '',
               asLeft: m.measured_value != null ? String(m.measured_value) : '',
             })))
-          } else if (type.includes('temperature')) {
+          } else if (type === 'temperature') {
             setTemperatureRows(measurements.map(m => ({
               id: m.id ?? crypto.randomUUID(),
               label: m.point_label,
               reference: m.standard_value != null ? String(m.standard_value) : '',
               measured: m.measured_value != null ? String(m.measured_value) : '',
             })))
-          } else if (type.includes('level') || type.includes('4-20') || type.includes('420')) {
+          } else if (type === 'level_4_20ma' || type === 'flow') {
             setLevelRows(measurements.map(m => ({
               pct: m.standard_value ?? 0,
               outputMA: m.measured_value != null ? String(m.measured_value) : '',
             })))
+          } else if (type === 'pressure_switch' || type === 'temperature_switch') {
+            const trip = measurements.find(m => m.point_label === 'Trip (Rising)')
+            const reset = measurements.find(m => m.point_label === 'Reset (Falling)')
+            setSwitchData({
+              setpoint: trip?.standard_value != null ? String(trip.standard_value) : '',
+              tolerancePct: '2',
+              asFoundTrip: '',
+              asFoundReset: '',
+              asLeftTrip: trip?.measured_value != null ? String(trip.measured_value) : '',
+              asLeftReset: reset?.measured_value != null ? String(reset.measured_value) : '',
+            })
+          } else if (type === 'conductivity') {
+            const standards = measurements.map(m => ({
+              id: crypto.randomUUID(),
+              nominal: m.standard_value != null ? String(m.standard_value) : '',
+              reading: m.measured_value != null ? String(m.measured_value) : '',
+              lotNumber: '',
+              expiry: '',
+            }))
+            if (standards.length > 0) {
+              setConductivityData(prev => ({ ...prev, standards }))
+            }
+          } else if (type === 'transmitter_4_20ma' && a) {
+            const pvMeasurements = measurements.filter(m => m.point_label.endsWith('% PV'))
+            if (pvMeasurements.length > 0) {
+              setTransmitterRows(pvMeasurements.map(m => {
+                const pct = parseInt(m.point_label) || 0
+                const maMeas = measurements.find(mm => mm.point_label === `${pct}% mA`)
+                return {
+                  pct,
+                  appliedValue: m.standard_value ?? 0,
+                  pvAsFound: '',
+                  pvAsLeft: m.measured_value != null ? String(m.measured_value) : '',
+                  maAsFound: '',
+                  maAsLeft: maMeas?.measured_value != null ? String(maMeas.measured_value) : '',
+                }
+              }))
+            }
           }
         }
       }
@@ -278,22 +435,20 @@ export default function CalibrationForm() {
   // Compute live measurements for overallResult
   const liveMeasurements: LocalMeasurement[] = useMemo(() => {
     if (!asset) return []
-    const type = asset.instrument_type?.toLowerCase() ?? ''
-    if (type.includes('pressure')) return pressureMeasurements(recordId, pressureRows)
-    if (type.includes('temperature')) return temperatureMeasurements(recordId, temperatureRows)
-    if (type.includes('ph') || type.includes('conductivity')) return phMeasurements(recordId, phData)
-    if (type.includes('level') || type.includes('4-20') || type.includes('420'))
-      return levelMeasurements(recordId, levelRows)
+    const type = asset.instrument_type ?? ''
+    if (type === 'pressure') return pressureMeasurements(recordId, pressureRows)
+    if (type === 'temperature') return temperatureMeasurements(recordId, temperatureRows)
+    if (type === 'ph_conductivity') return phMeasurements(recordId, phData)
+    if (type === 'conductivity') return conductivityMeasurements(recordId, conductivityData)
+    if (type === 'level_4_20ma' || type === 'flow') return levelMeasurements(recordId, levelRows)
+    if (type === 'transmitter_4_20ma') return transmitterMeasurements(recordId, transmitterRows)
+    if (type === 'pressure_switch' || type === 'temperature_switch') return switchMeasurements(recordId, switchData, asset)
     return []
-  }, [asset, pressureRows, temperatureRows, phData, levelRows, recordId])
+  }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, recordId])
 
   const result = useMemo(() => {
-    // pH/Conductivity has no pass/fail
     if (!asset) return 'INCOMPLETE' as const
-    const type = asset.instrument_type?.toLowerCase() ?? ''
-    if (type.includes('ph') || type.includes('conductivity')) {
-      return 'INCOMPLETE' as const
-    }
+    if (asset.instrument_type === 'ph_conductivity') return 'INCOMPLETE' as const
     return overallResult(liveMeasurements)
   }, [asset, liveMeasurements])
 
@@ -303,7 +458,7 @@ export default function CalibrationForm() {
     // Pre-fill measurement rows from the template's points
     const type = asset?.instrument_type?.toLowerCase() ?? ''
 
-    if (type.includes('pressure')) {
+    if (type === 'pressure') {
       setPressureRows(
         template.points.map((p, i) => ({
           pct: p.standard_value ?? i * 25,
@@ -312,7 +467,7 @@ export default function CalibrationForm() {
           asLeft: '',
         })),
       )
-    } else if (type.includes('temperature')) {
+    } else if (type === 'temperature') {
       setTemperatureRows(
         template.points.map((p) => ({
           id: crypto.randomUUID(),
@@ -321,11 +476,41 @@ export default function CalibrationForm() {
           measured: '',
         })),
       )
-    } else if (type.includes('level') || type.includes('4-20') || type.includes('420')) {
+    } else if (type === 'level_4_20ma' || type === 'flow') {
       setLevelRows(
         template.points.map((p, i) => ({
           pct: p.standard_value ?? i * 25,
           outputMA: '',
+        })),
+      )
+    } else if (type === 'pressure_switch' || type === 'temperature_switch') {
+      const firstPoint = template.points[0]
+      setSwitchData(prev => ({
+        ...prev,
+        setpoint: firstPoint?.standard_value != null ? String(firstPoint.standard_value) : prev.setpoint,
+        tolerancePct: template.tolerance_pct != null ? String(template.tolerance_pct) : prev.tolerancePct,
+      }))
+    } else if (type === 'conductivity') {
+      setConductivityData(prev => ({
+        ...prev,
+        tolerancePct: template.tolerance_pct != null ? String(template.tolerance_pct) : prev.tolerancePct,
+        standards: template.points.map(p => ({
+          id: crypto.randomUUID(),
+          nominal: p.standard_value != null ? String(p.standard_value) : '',
+          reading: '',
+          lotNumber: '',
+          expiry: '',
+        })),
+      }))
+    } else if (type === 'transmitter_4_20ma' && asset) {
+      setTransmitterRows(
+        template.points.map((p, i) => ({
+          pct: p.standard_value ?? i * 25,
+          appliedValue: p.standard_value ?? 0,
+          pvAsFound: '',
+          pvAsLeft: '',
+          maAsFound: '',
+          maAsLeft: '',
         })),
       )
     }
@@ -386,7 +571,11 @@ export default function CalibrationForm() {
   const instrumentType = asset.instrument_type ?? ''
   const typeLower = instrumentType.toLowerCase()
 
-  const isPH = typeLower.includes('ph') || typeLower.includes('conductivity')
+  const isPH = typeLower === 'ph_conductivity'
+  const isConductivity = typeLower === 'conductivity'
+  const isSwitch = typeLower === 'pressure_switch' || typeLower === 'temperature_switch'
+  const isLevel = typeLower === 'level_4_20ma' || typeLower === 'flow'
+  const isTransmitter = typeLower === 'transmitter_4_20ma'
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
@@ -449,7 +638,7 @@ export default function CalibrationForm() {
       </div>
 
       {/* Overall result banner */}
-      {!isPH && <ResultBanner result={result} />}
+      {!isPH && !isConductivity && <ResultBanner result={result} />}
 
       {/* Header fields */}
       <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
@@ -502,41 +691,39 @@ export default function CalibrationForm() {
           Measurements
         </h2>
 
-        {(typeLower.includes('pressure')) && (
-          <PressureTemplate
-            asset={asset}
-            rows={pressureRows}
-            onChange={setPressureRows}
-          />
+        {typeLower === 'pressure' && (
+          <PressureTemplate asset={asset} rows={pressureRows} onChange={setPressureRows} />
         )}
 
-        {typeLower.includes('temperature') && (
-          <TemperatureTemplate
-            rows={temperatureRows}
-            onChange={setTemperatureRows}
-          />
+        {typeLower === 'temperature' && (
+          <TemperatureTemplate rows={temperatureRows} onChange={setTemperatureRows} />
         )}
 
         {isPH && (
           <PHTemplate data={phData} onChange={setPhData} />
         )}
 
-        {(typeLower.includes('level') ||
-          typeLower.includes('4-20') ||
-          typeLower.includes('420')) && (
+        {isConductivity && (
+          <ConductivityTemplate data={conductivityData} onChange={setConductivityData} />
+        )}
+
+        {isLevel && (
           <LevelTemplate rows={levelRows} onChange={setLevelRows} />
         )}
 
-        {!typeLower.includes('pressure') &&
-          !typeLower.includes('temperature') &&
-          !isPH &&
-          !typeLower.includes('level') &&
-          !typeLower.includes('4-20') &&
-          !typeLower.includes('420') && (
-            <p className="text-sm text-gray-500 italic">
-              No template available for instrument type "{instrumentType}".
-            </p>
-          )}
+        {isTransmitter && (
+          <TransmitterTemplate asset={asset} rows={transmitterRows} onChange={setTransmitterRows} />
+        )}
+
+        {isSwitch && (
+          <SwitchTemplate asset={asset} data={switchData} onChange={setSwitchData} />
+        )}
+
+        {typeLower === 'other' && (
+          <p className="text-sm text-gray-500 italic">
+            No template for "Other" — add measurements manually via notes.
+          </p>
+        )}
       </div>
 
       {/* Save button */}

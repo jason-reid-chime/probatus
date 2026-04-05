@@ -7,6 +7,7 @@ import { ArrowLeft, QrCode, Loader2, AlertCircle, X } from 'lucide-react'
 import { useAsset, useUpsertAsset, useAssets } from '../../hooks/useAssets'
 import { useQrScanner } from '../../hooks/useQrScanner'
 import { useAuth } from '../../hooks/useAuth'
+import { INSTRUMENT_DEFAULTS } from '../../lib/assets/instrumentDefaults'
 
 // ---------------------------------------------------------------------------
 // Zod schema
@@ -21,7 +22,12 @@ const assetSchema = z.object({
     'pressure',
     'temperature',
     'ph_conductivity',
+    'conductivity',
     'level_4_20ma',
+    'flow',
+    'transmitter_4_20ma',
+    'pressure_switch',
+    'temperature_switch',
     'other',
   ]),
   // Numeric range fields: coerce from string input, blank → undefined
@@ -166,7 +172,8 @@ export default function AssetForm() {
     reset,
     formState: { errors },
   } = useForm<AssetFormValues>({
-    resolver: zodResolver(assetSchema) as any,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(assetSchema) as any, // zod v4 / react-hook-form type mismatch
     defaultValues: {
       instrument_type: 'pressure',
       calibration_interval_days: 365,
@@ -191,6 +198,17 @@ export default function AssetForm() {
       })
     }
   }, [isEditing, existingAsset, reset])
+
+  // Auto-fill unit + range when instrument type changes (new assets only)
+  const watchedInstrumentType = watch('instrument_type')
+  useEffect(() => {
+    if (isEditing) return
+    const defaults = INSTRUMENT_DEFAULTS[watchedInstrumentType]
+    if (!defaults) return
+    setValue('range_unit', defaults.unit, { shouldDirty: false })
+    setValue('range_min', defaults.min, { shouldDirty: false })
+    setValue('range_max', defaults.max, { shouldDirty: false })
+  }, [watchedInstrumentType, isEditing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Duplicate tag ID check
   const watchedTagId = watch('tag_id')
@@ -238,7 +256,7 @@ export default function AssetForm() {
       })
       navigate(`/assets/${saved.id}`, { replace: true })
     } catch (err: unknown) {
-      const msg = (err as any)?.message ?? (err instanceof Error ? err.message : JSON.stringify(err))
+      const msg = err instanceof Error ? err.message : (typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) : JSON.stringify(err))
       setServerError(msg || 'Failed to save asset.')
     }
   }
@@ -366,10 +384,15 @@ export default function AssetForm() {
                 name="instrument_type"
                 render={({ field }) => (
                   <select id="instrument_type" {...field} className={`mt-1.5 ${selectClass}`}>
-                    <option value="pressure">Pressure</option>
-                    <option value="temperature">Temperature</option>
-                    <option value="ph_conductivity">pH / Conductivity</option>
+                    <option value="pressure">Pressure (Analog)</option>
+                    <option value="temperature">Temperature (Analog)</option>
+                    <option value="transmitter_4_20ma">Transmitter (PV + 4-20 mA)</option>
                     <option value="level_4_20ma">Level / 4-20 mA</option>
+                    <option value="flow">Flow / 4-20 mA</option>
+                    <option value="pressure_switch">Pressure Switch</option>
+                    <option value="temperature_switch">Temperature Switch</option>
+                    <option value="ph_conductivity">pH / Conductivity</option>
+                    <option value="conductivity">Conductivity</option>
                     <option value="other">Other</option>
                   </select>
                 )}
@@ -409,7 +432,7 @@ export default function AssetForm() {
                   id="range_unit"
                   {...register('range_unit')}
                   className={`mt-1.5 ${inputClass}`}
-                  placeholder="psi"
+                  placeholder={INSTRUMENT_DEFAULTS[watchedInstrumentType]?.unit || 'unit'}
                 />
                 <FieldError message={errors.range_unit?.message} />
               </div>

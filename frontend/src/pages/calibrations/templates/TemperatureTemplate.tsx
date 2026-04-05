@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { Plus, Trash2, CheckCircle, XCircle } from 'lucide-react'
 import { calcErrorPct, isPass } from '../../../utils/calibrationMath'
 

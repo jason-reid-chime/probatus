@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider } from './contexts/AuthContext'
+import ErrorBoundary from './components/ErrorBoundary'
 import AppShell from './components/layout/AppShell'
 import CustomerPortalShell from './components/layout/CustomerPortalShell'
 import Login from './pages/Login'
@@ -31,6 +32,7 @@ const queryClient = new QueryClient({
 
 export default function App() {
   return (
+  <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <BrowserRouter>
@@ -60,8 +62,9 @@ export default function App() {
               <Route path="audit" element={<AuditPackage />} />
             </Route>
           </Routes>
-        </BrowserRouter>
-      </AuthProvider>
-    </QueryClientProvider>
+          </BrowserRouter>
+        </AuthProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   )
 }

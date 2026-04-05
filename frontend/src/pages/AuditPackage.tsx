@@ -37,16 +37,12 @@ export default function AuditPackage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
-  if (profile?.role === 'technician') {
-    navigate('/', { replace: true })
-    return null
-  }
-
   useEffect(() => {
+    if (profile?.role === 'technician') return
     supabase.from('customers').select('id, name').order('name').then(({ data }) => {
       if (data) setCustomers(data)
     })
-  }, [])
+  }, [profile?.role])
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -55,6 +51,11 @@ export default function AuditPackage() {
       end_date:   new Date().toISOString().slice(0, 10),
     },
   })
+
+  if (profile?.role === 'technician') {
+    navigate('/', { replace: true })
+    return null
+  }
 
   async function onSubmit(values: FormValues) {
     setGenerating(true)
