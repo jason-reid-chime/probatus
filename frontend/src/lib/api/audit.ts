@@ -1,4 +1,5 @@
 import { supabase } from '../supabase'
+import { API_URL } from './client'
 
 export interface AuditPackageRequest {
   start_date: string
@@ -10,8 +11,7 @@ export async function generateAuditPackage(req: AuditPackageRequest): Promise<Bl
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error('Not authenticated')
 
-  const apiUrl = import.meta.env.VITE_API_URL as string
-  const res = await fetch(`${apiUrl}/audit/package`, {
+  const res = await fetch(`${API_URL}/audit/package`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,

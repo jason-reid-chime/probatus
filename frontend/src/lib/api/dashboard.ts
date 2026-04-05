@@ -1,4 +1,5 @@
 import { supabase } from '../supabase'
+import { API_URL } from './client'
 
 export interface DashboardStats {
   overdue_count: number
@@ -30,8 +31,7 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) return ZERO_STATS
 
-    const apiUrl = import.meta.env.VITE_API_URL as string
-    const res = await fetch(`${apiUrl}/stats/dashboard`, {
+    const res = await fetch(`${API_URL}/stats/dashboard`, {
       headers: { Authorization: `Bearer ${session.access_token}` },
     })
     if (!res.ok) return ZERO_STATS

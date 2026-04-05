@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
+import { API_URL } from '../../lib/api/client'
 import { useAuth } from '../../hooks/useAuth'
 import { db } from '../../lib/db'
 import { enqueue } from '../../lib/sync/outbox'
@@ -272,8 +273,7 @@ export default function CalibrationDetail() {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Not authenticated')
-      const apiUrl = import.meta.env.VITE_API_URL as string
-      const res = await fetch(`${apiUrl}/calibrations/${recordId}/approve`, {
+      const res = await fetch(`${API_URL}/calibrations/${recordId}/approve`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ supervisor_signature: profile.full_name }),
@@ -299,8 +299,7 @@ export default function CalibrationDetail() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Not authenticated')
 
-      const apiUrl = import.meta.env.VITE_API_URL as string
-      const res = await fetch(`${apiUrl}/calibrations/${recordId}/certificate`, {
+      const res = await fetch(`${API_URL}/calibrations/${recordId}/certificate`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
