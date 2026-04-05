@@ -1,0 +1,448 @@
+import { useMemo, useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown } from 'lucide-react'
+import { supabase } from '../../lib/supabase'
+import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
+import { useAuth } from '../../hooks/useAuth'
+import { db } from '../../lib/db'
+import { enqueue } from '../../lib/sync/outbox'
+import { overallResult } from '../../utils/calibrationMath'
+import type { LocalMeasurement } from '../../lib/db'
+
+// ---------------------------------------------------------------------------
+// Status badge
+// ---------------------------------------------------------------------------
+const STATUS_STYLES: Record<string, string> = {
+  in_progress: 'bg-yellow-100 text-yellow-800 border-yellow-300',
+  pending_approval: 'bg-blue-100 text-blue-800 border-blue-300',
+  approved: 'bg-green-100 text-green-800 border-green-300',
+  rejected: 'bg-red-100 text-red-800 border-red-300',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  in_progress: 'In Progress',
+  pending_approval: 'Pending Approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border ${STATUS_STYLES[status] ?? 'bg-gray-100 text-gray-700 border-gray-300'}`}
+    >
+      {STATUS_LABELS[status] ?? status}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Overall result banner (read-only)
+// ---------------------------------------------------------------------------
+function ResultBanner({ result }: { result: 'PASS' | 'FAIL' | 'INCOMPLETE' }) {
+  if (result === 'INCOMPLETE') {
+    return (
+      <div className="flex items-center gap-3 px-5 py-4 rounded-xl border bg-gray-50 border-gray-300 text-gray-500 text-lg font-semibold">
+        <Clock size={24} />
+        <span>Incomplete — awaiting all measurements</span>
+      </div>
+    )
+  }
+  if (result === 'PASS') {
+    return (
+      <div className="flex items-center gap-3 px-5 py-4 rounded-xl border-2 bg-green-50 border-green-500 text-green-700 text-lg font-bold">
+        <CheckCircle size={28} />
+        <span>PASS</span>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-3 px-5 py-4 rounded-xl border-2 bg-red-50 border-red-500 text-red-700 text-lg font-bold">
+      <XCircle size={28} />
+      <span>FAIL</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Read-only measurement table
+// ---------------------------------------------------------------------------
+function MeasurementsTable({
+  measurements,
+}: {
+  measurements: LocalMeasurement[]
+}) {
+  if (measurements.length === 0) {
+    return (
+      <p className="text-sm text-gray-400 italic">No measurements recorded.</p>
+    )
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="bg-gray-100 text-left">
+            <th className="px-3 py-2 font-semibold text-gray-700">Point</th>
+            <th className="px-3 py-2 font-semibold text-gray-700">Standard</th>
+            <th className="px-3 py-2 font-semibold text-gray-700">Measured</th>
+            <th className="px-3 py-2 font-semibold text-gray-700 text-center">
+              Error %
+            </th>
+            <th className="px-3 py-2 font-semibold text-gray-700 text-center">
+              Pass/Fail
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {measurements.map((m) => (
+            <tr key={m.id} className="border-t border-gray-200">
+              <td className="px-3 py-2 font-medium text-gray-700">
+                {m.point_label}
+              </td>
+              <td className="px-3 py-2 text-gray-600">
+                {m.standard_value !== undefined
+                  ? `${m.standard_value}${m.unit ? ` ${m.unit}` : ''}`
+                  : '—'}
+              </td>
+              <td className="px-3 py-2 text-gray-800">
+                {m.measured_value !== undefined
+                  ? `${m.measured_value}${m.unit ? ` ${m.unit}` : ''}`
+                  : '—'}
+              </td>
+              <td className="px-3 py-2 text-center font-mono font-semibold">
+                {m.error_pct != null && isFinite(m.error_pct) ? (
+                  <span
+                    className={m.pass ? 'text-green-600' : 'text-red-600'}
+                  >
+                    {m.error_pct.toFixed(3)}%
+                  </span>
+                ) : (
+                  <span className="text-gray-400">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-center">
+                {m.pass === true && (
+                  <CheckCircle
+                    className="inline-block text-green-600"
+                    size={20}
+                  />
+                )}
+                {m.pass === false && (
+                  <XCircle className="inline-block text-red-600" size={20} />
+                )}
+                {(m.pass === undefined || m.pass === null) && (
+                  <span className="text-gray-400">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Sync status indicator
+// ---------------------------------------------------------------------------
+function useSyncStatus(recordId: string) {
+  const [pendingCount, setPendingCount] = useState<number | null>(null)
+
+  useMemo(() => {
+    db.outbox
+      .filter((e) => {
+        const payload = e.payload as Record<string, unknown>
+        return (
+          e.table === 'calibration_records' && payload['id'] === recordId
+        )
+      })
+      .count()
+      .then(setPendingCount)
+  }, [recordId])
+
+  return pendingCount
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+export default function CalibrationDetail() {
+  const { recordId } = useParams<{ recordId: string }>()
+  const { profile } = useAuth()
+
+  const {
+    data: record,
+    isLoading: recordLoading,
+  } = useCalibrationRecord(recordId ?? '')
+
+  const {
+    data: measurements = [],
+    isLoading: measLoading,
+  } = useMeasurementsByRecord(recordId ?? '')
+
+  const queryClient = useQueryClient()
+  const pendingCount = useSyncStatus(recordId ?? '')
+
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [approving, setApproving] = useState(false)
+  const [approveError, setApproveError] = useState<string | null>(null)
+  const [generatingPdf, setGeneratingPdf] = useState(false)
+  const [pdfError, setPdfError] = useState<string | null>(null)
+
+  const result = useMemo(() => {
+    if (!record) return 'INCOMPLETE' as const
+    const type = (record as unknown as { instrument_type?: string }).instrument_type?.toLowerCase() ?? ''
+    if (type.includes('ph') || type.includes('conductivity')) {
+      return 'INCOMPLETE' as const
+    }
+    return overallResult(measurements)
+  }, [record, measurements])
+
+  async function handleSubmitForApproval() {
+    if (!record || !profile) return
+    setSubmitting(true)
+    setSubmitError(null)
+
+    try {
+      const updated = {
+        ...record,
+        status: 'pending_approval' as const,
+        updated_at: new Date().toISOString(),
+      }
+
+      // Write to Dexie
+      await db.calibration_records.put(updated)
+
+      // Enqueue in outbox
+      await enqueue({
+        table: 'calibration_records',
+        operation: 'upsert',
+        payload: updated as unknown as Record<string, unknown>,
+      })
+
+      // Attempt online update
+      try {
+        const { supabase } = await import('../../lib/supabase')
+        await supabase
+          .from('calibration_records')
+          .update({ status: 'pending_approval', updated_at: updated.updated_at })
+          .eq('id', record.id)
+      } catch {
+        // Offline — outbox will sync when connectivity returns
+      }
+
+      // Force re-render via page reload (query invalidation handled by hook)
+      window.location.reload()
+    } catch (err) {
+      setSubmitError(String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (recordLoading || measLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-gray-500">
+        Loading…
+      </div>
+    )
+  }
+
+  if (!record) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-gray-500">
+        Calibration record not found.
+      </div>
+    )
+  }
+
+  const performedAt = new Date(record.performed_at).toLocaleString()
+  const canSubmit = record.status === 'in_progress'
+  const canApprove = record.status === 'pending_approval' && (profile?.role === 'supervisor' || profile?.role === 'admin')
+  const canGenerateCert = record.status === 'approved'
+  const canGeneratePdf = record.status === 'approved'
+
+  async function handleApprove() {
+    if (!recordId || !profile) return
+    setApproving(true)
+    setApproveError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+      const apiUrl = import.meta.env.VITE_API_URL as string
+      const res = await fetch(`${apiUrl}/calibrations/${recordId}/approve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supervisor_signature: profile.full_name }),
+      })
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      // Update Dexie so status persists on next visit
+      await db.calibration_records.update(recordId, { status: 'approved' })
+      queryClient.setQueryData(calibrationKeys.detail(recordId), (old: any) =>
+        old ? { ...old, status: 'approved' } : old
+      )
+    } catch (err) {
+      setApproveError(err instanceof Error ? err.message : 'Failed to approve')
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  async function handleGeneratePdf() {
+    if (!recordId) return
+    setGeneratingPdf(true)
+    setPdfError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+
+      const apiUrl = import.meta.env.VITE_API_URL as string
+      const res = await fetch(`${apiUrl}/calibrations/${recordId}/certificate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `certificate-${recordId.slice(0, 8)}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Failed to generate certificate')
+    } finally {
+      setGeneratingPdf(false)
+    }
+  }
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+      {/* Header row */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">
+            Calibration Record
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">{performedAt}</p>
+        </div>
+        <StatusBadge status={record.status} />
+      </div>
+
+      {/* Sync indicator */}
+      <div className="flex items-center gap-2 text-sm text-gray-500">
+        {pendingCount === null || pendingCount === 0 ? (
+          <>
+            <Wifi size={15} className="text-green-500" />
+            <span>Synced</span>
+          </>
+        ) : (
+          <>
+            <WifiOff size={15} className="text-amber-500" />
+            <RefreshCw size={14} className="animate-spin text-amber-500" />
+            <span>Saved locally • Syncing…</span>
+          </>
+        )}
+      </div>
+
+      {/* Result banner */}
+      <ResultBanner result={result} />
+
+      {/* Record details */}
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+        <h2 className="text-base font-semibold text-gray-800">Details</h2>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+          {record.sales_number && (
+            <>
+              <dt className="text-gray-500">Sales #</dt>
+              <dd className="text-gray-800">{record.sales_number}</dd>
+            </>
+          )}
+          {record.flag_number && (
+            <>
+              <dt className="text-gray-500">Flag #</dt>
+              <dd className="text-gray-800">{record.flag_number}</dd>
+            </>
+          )}
+          {record.notes && (
+            <>
+              <dt className="text-gray-500">Notes</dt>
+              <dd className="text-gray-800 col-span-1">{record.notes}</dd>
+            </>
+          )}
+        </dl>
+      </div>
+
+      {/* Measurements */}
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
+        <h2 className="text-base font-semibold text-gray-800">Measurements</h2>
+        <MeasurementsTable measurements={measurements} />
+      </div>
+
+      {/* Continue editing */}
+      {record.status === 'in_progress' && (
+        <button
+          type="button"
+          onClick={() => navigate(`/calibrations/${record.asset_id}/edit/${recordId}`)}
+          className="w-full inline-flex items-center justify-center gap-2 bg-white border border-brand-500 text-brand-600 hover:bg-brand-50 font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
+        >
+          Continue Calibration
+        </button>
+      )}
+
+      {/* Submit for approval */}
+      {canSubmit && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={handleSubmitForApproval}
+            disabled={submitting}
+            className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
+          >
+            {submitting ? 'Submitting…' : 'Submit for Approval'}
+          </button>
+          {submitError && (
+            <p className="text-sm text-red-600 text-center">{submitError}</p>
+          )}
+        </div>
+      )}
+
+      {/* Approve */}
+      {canApprove && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={approving}
+            className="w-full inline-flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
+          >
+            {approving ? 'Approving…' : 'Approve Calibration'}
+          </button>
+          {approveError && <p className="text-sm text-red-600 text-center">{approveError}</p>}
+        </div>
+      )}
+
+      {/* Generate certificate */}
+      {canGeneratePdf && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={handleGeneratePdf}
+            disabled={generatingPdf}
+            className="w-full inline-flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
+          >
+            <FileDown size={20} />
+            {generatingPdf ? 'Generating…' : 'Download Certificate (PDF)'}
+          </button>
+          {pdfError && (
+            <p className="text-sm text-red-600 text-center">{pdfError}</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

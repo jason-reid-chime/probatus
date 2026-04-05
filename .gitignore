@@ -1,0 +1,23 @@
+# Compiled binaries
+backend/api
+backend/tmp/
+
+# Environment files
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
