@@ -1,5 +1,6 @@
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
+# go 1.24.0
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ .
