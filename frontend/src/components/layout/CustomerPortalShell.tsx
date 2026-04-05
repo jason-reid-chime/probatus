@@ -19,11 +19,6 @@ export default function CustomerPortalShell() {
     return <Navigate to="/login" replace />
   }
 
-  // Non-customer users (staff) belong in the main app
-  if (profile && !profile.roles?.includes('customer')) {
-    return <Navigate to="/" replace />
-  }
-
   const handleSignOut = async () => {
     try {
       await signOut()
