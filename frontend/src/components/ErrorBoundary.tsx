@@ -1,5 +1,6 @@
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import * as Sentry from '@sentry/react'
 import { RefreshCw } from 'lucide-react'
 
 interface Props {
@@ -14,16 +15,8 @@ interface State {
 
 /**
  * Catches unhandled render errors anywhere in the component tree and shows a
- * recovery UI instead of a blank screen.
- *
- * Usage:
- *   <ErrorBoundary>
- *     <YourComponent />
- *   </ErrorBoundary>
- *
- * To report to an error-tracking service (e.g. Sentry) add the call inside
- * componentDidCatch:
- *   Sentry.captureException(error, { extra: { componentStack } })
+ * recovery UI instead of a blank screen. Reports to Sentry when VITE_SENTRY_DSN
+ * is set (Sentry.init is a no-op otherwise).
  */
 export default class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null }
@@ -33,7 +26,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    // Replace this console.error with Sentry.captureException when ready
+    Sentry.captureException(error, { extra: { componentStack: info.componentStack } })
     console.error('[ErrorBoundary]', error, info.componentStack)
   }
 

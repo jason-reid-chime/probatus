@@ -57,6 +57,7 @@ jobs:
         run: npm run build
         env:
           VITE_API_URL: https://probatus-api-production.up.railway.app
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
 
   # ── Backend ────────────────────────────────────────────────────────────────
   backend:
