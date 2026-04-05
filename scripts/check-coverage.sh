@@ -34,7 +34,7 @@ FAILED=0
 check_info "Running frontend tests with coverage…"
 
 cd "$REPO_ROOT/frontend"
-npm run test:coverage -- --reporter=silent > /dev/null 2>&1 || {
+npm run test:coverage > /dev/null 2>&1 || {
   check_fail "Frontend tests failed — fix failing tests before committing."
   FAILED=1
 }
