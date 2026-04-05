@@ -162,6 +162,23 @@ export default function AssetForm() {
   const [tagDuplicateWarning, setTagDuplicateWarning] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
 
+  // Default unit/range per instrument type (used for new assets)
+  const INSTRUMENT_DEFAULTS: Record<
+    AssetFormValues['instrument_type'],
+    { unit: string; min: number; max: number }
+  > = {
+    pressure:            { unit: 'psi',   min: 0,  max: 100  },
+    temperature:         { unit: '°C',    min: 0,  max: 150  },
+    ph_conductivity:     { unit: 'pH',    min: 0,  max: 14   },
+    conductivity:        { unit: 'µS/cm', min: 0,  max: 1000 },
+    level_4_20ma:        { unit: 'mA',    min: 4,  max: 20   },
+    flow:                { unit: 'mA',    min: 4,  max: 20   },
+    transmitter_4_20ma:  { unit: 'mA',    min: 4,  max: 20   },
+    pressure_switch:     { unit: 'psi',   min: 0,  max: 100  },
+    temperature_switch:  { unit: '°C',    min: 0,  max: 150  },
+    other:               { unit: '',      min: 0,  max: 100  },
+  }
+
   const {
     register,
     handleSubmit,
@@ -196,6 +213,17 @@ export default function AssetForm() {
       })
     }
   }, [isEditing, existingAsset, reset])
+
+  // Auto-fill unit + range when instrument type changes (new assets only)
+  const watchedInstrumentType = watch('instrument_type')
+  useEffect(() => {
+    if (isEditing) return
+    const defaults = INSTRUMENT_DEFAULTS[watchedInstrumentType]
+    if (!defaults) return
+    setValue('range_unit', defaults.unit, { shouldDirty: false })
+    setValue('range_min', defaults.min, { shouldDirty: false })
+    setValue('range_max', defaults.max, { shouldDirty: false })
+  }, [watchedInstrumentType, isEditing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Duplicate tag ID check
   const watchedTagId = watch('tag_id')
@@ -419,7 +447,7 @@ export default function AssetForm() {
                   id="range_unit"
                   {...register('range_unit')}
                   className={`mt-1.5 ${inputClass}`}
-                  placeholder="psi"
+                  placeholder={INSTRUMENT_DEFAULTS[watchedInstrumentType]?.unit || 'unit'}
                 />
                 <FieldError message={errors.range_unit?.message} />
               </div>
