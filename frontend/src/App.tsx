@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider } from './contexts/AuthContext'
 import AppShell from './components/layout/AppShell'
 import CustomerPortalShell from './components/layout/CustomerPortalShell'
@@ -33,6 +34,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <BrowserRouter>
+          <Analytics />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<CustomerPortalShell />}>
