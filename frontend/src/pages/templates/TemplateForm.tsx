@@ -24,7 +24,12 @@ const schema = z.object({
     'pressure',
     'temperature',
     'ph_conductivity',
+    'conductivity',
     'level_4_20ma',
+    'flow',
+    'transmitter_4_20ma',
+    'pressure_switch',
+    'temperature_switch',
     'other',
   ]),
   tolerance_pct: z
@@ -47,6 +52,8 @@ function defaultPoints(
   switch (type) {
     case 'pressure':
     case 'level_4_20ma':
+    case 'flow':
+    case 'transmitter_4_20ma':
       return [
         { label: '0%', standard_value: 0, unit: '' },
         { label: '25%', standard_value: 25, unit: '' },
@@ -65,6 +72,16 @@ function defaultPoints(
         { label: 'pH Reading', standard_value: null, unit: 'pH' },
         { label: 'Conductivity', standard_value: null, unit: 'µS/cm' },
       ]
+    case 'conductivity':
+      return [
+        { label: '84 µS/cm Standard', standard_value: 84, unit: 'µS/cm' },
+        { label: '1413 µS/cm Standard', standard_value: 1413, unit: 'µS/cm' },
+      ]
+    case 'pressure_switch':
+    case 'temperature_switch':
+      return [
+        { label: 'Setpoint', standard_value: null, unit: '' },
+      ]
     case 'other':
     default:
       return [{ label: '', standard_value: null, unit: '' }]
@@ -78,10 +95,15 @@ const INSTRUMENT_TYPES: {
   value: FormValues['instrument_type']
   label: string
 }[] = [
-  { value: 'pressure', label: 'Pressure' },
-  { value: 'temperature', label: 'Temperature' },
-  { value: 'ph_conductivity', label: 'pH / Conductivity' },
+  { value: 'pressure', label: 'Pressure (Analog)' },
+  { value: 'temperature', label: 'Temperature (Analog)' },
+  { value: 'transmitter_4_20ma', label: 'Transmitter (PV + 4–20 mA)' },
   { value: 'level_4_20ma', label: 'Level (4–20 mA)' },
+  { value: 'flow', label: 'Flow (4–20 mA)' },
+  { value: 'pressure_switch', label: 'Pressure Switch' },
+  { value: 'temperature_switch', label: 'Temperature Switch' },
+  { value: 'ph_conductivity', label: 'pH / Conductivity' },
+  { value: 'conductivity', label: 'Conductivity' },
   { value: 'other', label: 'Other' },
 ]
 

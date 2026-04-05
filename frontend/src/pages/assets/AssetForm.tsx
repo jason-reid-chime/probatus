@@ -21,7 +21,12 @@ const assetSchema = z.object({
     'pressure',
     'temperature',
     'ph_conductivity',
+    'conductivity',
     'level_4_20ma',
+    'flow',
+    'transmitter_4_20ma',
+    'pressure_switch',
+    'temperature_switch',
     'other',
   ]),
   // Numeric range fields: coerce from string input, blank → undefined
@@ -366,10 +371,15 @@ export default function AssetForm() {
                 name="instrument_type"
                 render={({ field }) => (
                   <select id="instrument_type" {...field} className={`mt-1.5 ${selectClass}`}>
-                    <option value="pressure">Pressure</option>
-                    <option value="temperature">Temperature</option>
-                    <option value="ph_conductivity">pH / Conductivity</option>
+                    <option value="pressure">Pressure (Analog)</option>
+                    <option value="temperature">Temperature (Analog)</option>
+                    <option value="transmitter_4_20ma">Transmitter (PV + 4-20 mA)</option>
                     <option value="level_4_20ma">Level / 4-20 mA</option>
+                    <option value="flow">Flow / 4-20 mA</option>
+                    <option value="pressure_switch">Pressure Switch</option>
+                    <option value="temperature_switch">Temperature Switch</option>
+                    <option value="ph_conductivity">pH / Conductivity</option>
+                    <option value="conductivity">Conductivity</option>
                     <option value="other">Other</option>
                   </select>
                 )}
