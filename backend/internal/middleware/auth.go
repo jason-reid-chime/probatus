@@ -77,6 +77,32 @@ func fetchECPublicKey(supabaseURL string) (*ecdsa.PublicKey, error) {
 	return nil, fmt.Errorf("no EC signing key found in JWKS response")
 }
 
+// validateToken parses and validates a raw JWT string using ES256 (preferred)
+// or HS256 (fallback). Returns the verified MapClaims or an error.
+func validateToken(tokenString string, ecKey *ecdsa.PublicKey, hmacSecret []byte) (jwt.MapClaims, error) {
+	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
+		switch t.Method.(type) {
+		case *jwt.SigningMethodECDSA:
+			if ecKey == nil {
+				return nil, fmt.Errorf("ES256 token but no EC public key loaded")
+			}
+			return ecKey, nil
+		case *jwt.SigningMethodHMAC:
+			return hmacSecret, nil
+		default:
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+	}, jwt.WithValidMethods([]string{"ES256", "HS256"}))
+	if err != nil || !token.Valid {
+		return nil, fmt.Errorf("invalid or expired token: %w", err)
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	return claims, nil
+}
+
 // Auth returns a Chi middleware that validates Supabase-issued JWTs and injects
 // userID, tenantID, and role into the request context.
 func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
@@ -112,28 +138,10 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			tokenString := parts[1]
 
-			token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
-				switch t.Method.(type) {
-				case *jwt.SigningMethodECDSA:
-					if ecKey == nil {
-						return nil, fmt.Errorf("ES256 token but no EC public key loaded")
-					}
-					return ecKey, nil
-				case *jwt.SigningMethodHMAC:
-					return hmacSecret, nil
-				default:
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-				}
-			}, jwt.WithValidMethods([]string{"ES256", "HS256"}))
-			if err != nil || !token.Valid {
+			claims, err := validateToken(tokenString, ecKey, hmacSecret)
+			if err != nil {
 				log.Printf("AUTH: JWT validation failed: %v", err)
 				writeAuthError(w, "invalid or expired token")
-				return
-			}
-
-			claims, ok := token.Claims.(jwt.MapClaims)
-			if !ok {
-				writeAuthError(w, "invalid token claims")
 				return
 			}
 

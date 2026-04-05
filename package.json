@@ -1,0 +1,16 @@
+{
+  "name": "probatus",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "frontend/src/**/*.{ts,tsx}": [
+      "bash -c 'cd frontend && npx eslint --max-warnings=0'"
+    ]
+  },
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^16.4.0"
+  }
+}
