@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"os"
@@ -113,9 +113,9 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 		var err error
 		ecKey, err = fetchECPublicKey(supabaseURL)
 		if err != nil {
-			log.Printf("WARN: could not fetch JWKS (falling back to HMAC): %v", err)
+			slog.Warn("could not fetch JWKS, falling back to HMAC", "error", err)
 		} else {
-			log.Printf("INFO: loaded ES256 public key from Supabase JWKS")
+			slog.Info("loaded ES256 public key from Supabase JWKS")
 		}
 	}
 
@@ -140,7 +140,7 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			claims, err := validateToken(tokenString, ecKey, hmacSecret)
 			if err != nil {
-				log.Printf("AUTH: JWT validation failed: %v", err)
+				slog.Warn("JWT validation failed", "error", err)
 				writeAuthError(w, "invalid or expired token")
 				return
 			}
@@ -158,7 +158,7 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				sub,
 			).Scan(&tenantID)
 			if err != nil {
-				log.Printf("AUTH: profile lookup failed for sub=%s: %v", sub, err)
+				slog.Error("profile lookup failed", "sub", sub, "error", err)
 				writeAuthError(w, "user profile not found")
 				return
 			}
