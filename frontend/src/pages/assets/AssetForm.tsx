@@ -7,6 +7,7 @@ import { ArrowLeft, QrCode, Loader2, AlertCircle, X } from 'lucide-react'
 import { useAsset, useUpsertAsset, useAssets } from '../../hooks/useAssets'
 import { useQrScanner } from '../../hooks/useQrScanner'
 import { useAuth } from '../../hooks/useAuth'
+import { INSTRUMENT_DEFAULTS } from '../../lib/assets/instrumentDefaults'
 
 // ---------------------------------------------------------------------------
 // Zod schema
@@ -161,23 +162,6 @@ export default function AssetForm() {
   const [scannerOpen, setScannerOpen] = useState(false)
   const [tagDuplicateWarning, setTagDuplicateWarning] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
-
-  // Default unit/range per instrument type (used for new assets)
-  const INSTRUMENT_DEFAULTS: Record<
-    AssetFormValues['instrument_type'],
-    { unit: string; min: number; max: number }
-  > = {
-    pressure:            { unit: 'psi',   min: 0,  max: 100  },
-    temperature:         { unit: '°C',    min: 0,  max: 150  },
-    ph_conductivity:     { unit: 'pH',    min: 0,  max: 14   },
-    conductivity:        { unit: 'µS/cm', min: 0,  max: 1000 },
-    level_4_20ma:        { unit: 'mA',    min: 4,  max: 20   },
-    flow:                { unit: 'mA',    min: 4,  max: 20   },
-    transmitter_4_20ma:  { unit: 'mA',    min: 4,  max: 20   },
-    pressure_switch:     { unit: 'psi',   min: 0,  max: 100  },
-    temperature_switch:  { unit: '°C',    min: 0,  max: 150  },
-    other:               { unit: '',      min: 0,  max: 100  },
-  }
 
   const {
     register,
