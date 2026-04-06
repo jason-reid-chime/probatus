@@ -99,6 +99,7 @@ func main() {
 		r.Post("/standards", standardsHandler.Create)
 		r.Get("/standards/{id}", standardsHandler.Get)
 		r.Put("/standards/{id}", standardsHandler.Update)
+		r.Delete("/standards/{id}", standardsHandler.Delete)
 
 		// Stats
 		r.Get("/stats/dashboard", statsHandler.Dashboard)

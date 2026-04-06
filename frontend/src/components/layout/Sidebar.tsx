@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Wrench,
   ClipboardList,
+  ClipboardCheck,
   FlaskConical,
   LayoutTemplate,
   FileCheck,
@@ -42,6 +43,12 @@ const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', Icon: LayoutDashboard },
   { to: '/assets', label: 'Assets', Icon: Wrench },
   { to: '/calibrations', label: 'Calibrations', Icon: ClipboardList },
+  {
+    to: '/approvals',
+    label: 'Approvals',
+    Icon: ClipboardCheck,
+    roles: ['supervisor', 'admin'],
+  },
   {
     to: '/standards',
     label: 'Standards',

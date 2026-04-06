@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -388,8 +389,12 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SupervisorSignature string `json:"supervisor_signature"`
 	}
-	// Decode is best-effort; body may be empty.
-	json.NewDecoder(r.Body).Decode(&body)
+	// Body is optional — supervisor_signature may be omitted. Reject only
+	// clearly malformed JSON; an empty body (io.EOF) is fine.
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	now := time.Now().UTC()
 	tag, err := h.pool.Exec(r.Context(),
