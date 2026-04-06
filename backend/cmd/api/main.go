@@ -66,6 +66,7 @@ func main() {
 	r.Use(chimiddleware.RequestID)  // attach X-Request-Id early so logger picks it up
 	r.Use(middleware.RequestLogger) // structured slog request logging
 	r.Use(middleware.Recoverer)     // Sentry-aware panic recovery (replaces chimiddleware.Recoverer)
+	r.Use(middleware.RateLimit)     // per-IP token bucket (100 req/min, burst 20)
 	r.Use(middleware.CORS)
 
 	// Public routes.
@@ -114,6 +115,10 @@ func main() {
 		r.Put("/templates/{id}", templatesHandler.Update)
 		r.Delete("/templates/{id}", templatesHandler.Delete)
 	})
+
+	if os.Getenv("CORS_ORIGINS") == "" {
+		slog.Warn("CORS_ORIGINS is not set — all origins are allowed (fine for dev, not for production)")
+	}
 
 	slog.Info("Probatus API starting", "port", port)
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), r); err != nil {
