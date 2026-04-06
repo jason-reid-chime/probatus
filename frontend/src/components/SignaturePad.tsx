@@ -12,12 +12,14 @@ export default function SignaturePad({ value, onChange, label = 'Signature' }: S
   const drawing = useRef(false)
   const [isEmpty, setIsEmpty] = useState(!value)
 
-  // Restore saved signature
+  // Restore saved signature on mount only — intentionally omitting `value`
+  // from deps so drawing doesn't reset on every parent re-render.
   useEffect(() => {
     if (!value || !canvasRef.current) return
     const img = new Image()
     img.onload = () => canvasRef.current?.getContext('2d')?.drawImage(img, 0, 0)
     img.src = value
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function getPos(e: React.MouseEvent | React.TouchEvent) {

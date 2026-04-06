@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CheckCircle, ClipboardCheck } from 'lucide-react'
+import { CheckCircle, ClipboardCheck, RefreshCw, AlertCircle } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { db } from '../../lib/db'
 import { useAuth } from '../../hooks/useAuth'
@@ -37,34 +37,55 @@ export default function ApprovalDashboard() {
   const [error, setError] = useState<string | null>(null)
   const [approving, setApproving] = useState<string | null>(null)
 
-  // Only supervisors and admins should see this page
-  if (profile && profile.role === 'technician') {
-    navigate('/', { replace: true })
-    return null
-  }
+  // Redirect technicians — done in effect to avoid calling navigate during render
+  useEffect(() => {
+    if (profile?.role === 'technician') {
+      navigate('/', { replace: true })
+    }
+  }, [profile, navigate])
 
-  async function load() {
+  const load = useCallback(async () => {
+    if (!profile || profile.role === 'technician') return
     setLoading(true)
     setError(null)
+
+    // Fetch pending records + asset details.
+    // We avoid joining profiles here because calibration_records has two FKs
+    // to profiles (technician_id and supervisor_id) which makes Supabase's
+    // auto-join ambiguous. Technician names are resolved in a second pass.
     const { data, error: fetchError } = await supabase
       .from('calibration_records')
       .select(`
-        id, asset_id, technician_id, performed_at, sales_number, flag_number, notes,
-        assets ( tag_id, manufacturer, model, location ),
-        profiles ( full_name )
+        id, asset_id, technician_id, performed_at,
+        sales_number, flag_number, notes,
+        assets ( tag_id, manufacturer, model, location )
       `)
       .eq('status', 'pending_approval')
       .order('performed_at', { ascending: true })
 
     if (fetchError) {
-      setError('Failed to load pending approvals.')
+      setError(fetchError.message)
       setLoading(false)
       return
     }
 
-    const mapped: PendingRecord[] = (data ?? []).map((r: Record<string, unknown>) => {
-      const asset = r.assets as Record<string, string | null> | null
-      const tech = r.profiles as { full_name: string | null } | null
+    const rows = data ?? []
+
+    // Resolve unique technician IDs to names in one query
+    const techIds = [...new Set(rows.map((r) => r.technician_id as string))]
+    const techNames: Record<string, string> = {}
+    if (techIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', techIds)
+      for (const p of profiles ?? []) {
+        techNames[p.id] = p.full_name ?? ''
+      }
+    }
+
+    const mapped: PendingRecord[] = rows.map((r) => {
+      const asset = r.assets as unknown as Record<string, string | null> | null
       return {
         id: r.id as string,
         asset_id: r.asset_id as string,
@@ -77,25 +98,31 @@ export default function ApprovalDashboard() {
         asset_manufacturer: asset?.manufacturer ?? null,
         asset_model: asset?.model ?? null,
         asset_location: asset?.location ?? null,
-        technician_name: tech?.full_name ?? null,
+        technician_name: techNames[r.technician_id as string] ?? null,
       }
     })
 
     setRecords(mapped)
     setLoading(false)
-  }
+  }, [profile])
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load()
+  }, [load])
 
   async function handleApprove(recordId: string) {
     setApproving(recordId)
+    setError(null)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch(`${API_URL}/calibrations/${recordId}/approve`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
       })
-      if (!res.ok) throw new Error('Approval failed')
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? `Server error ${res.status}`)
+      }
       await db.calibration_records.update(recordId, { status: 'approved' })
       setRecords((prev) => prev.filter((r) => r.id !== recordId))
     } catch (err) {
@@ -105,18 +132,41 @@ export default function ApprovalDashboard() {
     }
   }
 
+  // Don't render anything while technician redirect is in flight
+  if (profile?.role === 'technician') return null
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Pending Approvals</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Calibrations submitted by technicians awaiting your sign-off
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Pending Approvals</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Calibrations submitted by technicians awaiting your sign-off
+          </p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 disabled:opacity-40 transition-colors"
+        >
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          Refresh
+        </button>
       </div>
 
       {error && (
-        <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 flex items-start gap-3">
+          <AlertCircle size={16} className="text-red-500 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-red-800">Failed to load approvals</p>
+            <p className="text-xs text-red-600 mt-0.5">{error}</p>
+          </div>
+          <button
+            onClick={load}
+            className="text-xs font-semibold text-red-700 hover:text-red-900 underline underline-offset-2 flex-shrink-0"
+          >
+            Try again
+          </button>
         </div>
       )}
 
