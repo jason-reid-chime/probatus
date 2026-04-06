@@ -21,11 +21,7 @@ CREATE POLICY "tenant_isolation" ON calibration_records
     tenant_id = current_tenant_id()
     AND (
       -- Non-customer roles see all records in their tenant
-      NOT EXISTS (
-        SELECT 1 FROM profiles
-        WHERE id = auth.uid()
-          AND roles @> ARRAY['customer']::user_role[]
-      )
+      (SELECT role FROM profiles WHERE id = auth.uid()) != 'customer'
       OR
       -- Customer role: only records for their company's assets
       asset_id IN (
@@ -45,11 +41,7 @@ CREATE POLICY "tenant_isolation" ON assets
   FOR ALL USING (
     tenant_id = current_tenant_id()
     AND (
-      NOT EXISTS (
-        SELECT 1 FROM profiles
-        WHERE id = auth.uid()
-          AND roles @> ARRAY['customer']::user_role[]
-      )
+      (SELECT role FROM profiles WHERE id = auth.uid()) != 'customer'
       OR
       customer_id = (SELECT customer_id FROM profiles WHERE id = auth.uid())
     )

@@ -23,6 +23,17 @@ import (
 )
 
 func main() {
+	// Validate required environment variables before doing anything else.
+	// This surfaces misconfigured deploys immediately rather than failing
+	// with a cryptic error when the first request arrives.
+	requiredEnv := []string{"DATABASE_URL", "SUPABASE_JWT_SECRET", "SUPABASE_URL"}
+	for _, v := range requiredEnv {
+		if os.Getenv(v) == "" {
+			slog.Error("required environment variable is not set", "var", v)
+			os.Exit(1)
+		}
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -66,6 +77,8 @@ func main() {
 	r.Use(chimiddleware.RequestID)  // attach X-Request-Id early so logger picks it up
 	r.Use(middleware.RequestLogger) // structured slog request logging
 	r.Use(middleware.Recoverer)     // Sentry-aware panic recovery (replaces chimiddleware.Recoverer)
+	r.Use(middleware.SecureHeaders) // X-Content-Type-Options, X-Frame-Options, HSTS, etc.
+	r.Use(middleware.LimitBody)     // cap request body at 2 MB
 	r.Use(middleware.RateLimit)     // per-IP token bucket (100 req/min, burst 20)
 	r.Use(middleware.CORS)
 
