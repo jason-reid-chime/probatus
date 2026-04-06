@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/getsentry/sentry-go"
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
@@ -22,10 +24,15 @@ import (
 	"github.com/jasonreid/probatus/internal/templates"
 )
 
+// flushSentry waits up to 2 seconds for any buffered Sentry events to be
+// delivered before the process exits. Without this, events captured just
+// before os.Exit are silently dropped.
+func flushSentry() {
+	sentry.Flush(2 * time.Second)
+}
+
 func main() {
 	// Validate required environment variables before doing anything else.
-	// This surfaces misconfigured deploys immediately rather than failing
-	// with a cryptic error when the first request arrives.
 	requiredEnv := []string{"DATABASE_URL", "SUPABASE_JWT_SECRET", "SUPABASE_URL"}
 	for _, v := range requiredEnv {
 		if os.Getenv(v) == "" {
@@ -40,14 +47,18 @@ func main() {
 	}
 
 	// Initialise Sentry — no-op when SENTRY_DSN is unset.
+	sentryEnabled := false
 	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
 		if err := sentry.Init(sentry.ClientOptions{
 			Dsn:              dsn,
-			Environment:      os.Getenv("RAILWAY_ENVIRONMENT"), // "production" on Railway
+			Environment:      os.Getenv("RAILWAY_ENVIRONMENT"),
 			TracesSampleRate: 0.1,
+			// Attach stack traces to all captured messages, not just panics.
+			AttachStacktrace: true,
 		}); err != nil {
 			slog.Warn("Sentry init failed", "error", err)
 		} else {
+			sentryEnabled = true
 			slog.Info("Sentry initialised")
 		}
 	}
@@ -57,6 +68,7 @@ func main() {
 	pool, err := db.NewPool(ctx)
 	if err != nil {
 		sentry.CaptureException(err)
+		flushSentry() // ensure event is delivered before exit
 		slog.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
@@ -76,7 +88,19 @@ func main() {
 	// Global middleware — order matters.
 	r.Use(chimiddleware.RequestID)  // attach X-Request-Id early so logger picks it up
 	r.Use(middleware.RequestLogger) // structured slog request logging
-	r.Use(middleware.Recoverer)     // Sentry-aware panic recovery (replaces chimiddleware.Recoverer)
+
+	// sentryhttp attaches a Sentry hub to every request context so that panics
+	// and manual CaptureException calls include full HTTP context (URL, method,
+	// headers, user). Must come before Recoverer so the hub is on the context
+	// when the panic is caught.
+	if sentryEnabled {
+		sentryMiddleware := sentryhttp.New(sentryhttp.Options{
+			Repanic: true, // let our Recoverer handle the 500 response
+		})
+		r.Use(sentryMiddleware.Handle)
+	}
+
+	r.Use(middleware.Recoverer)     // Sentry-aware panic recovery
 	r.Use(middleware.SecureHeaders) // X-Content-Type-Options, X-Frame-Options, HSTS, etc.
 	r.Use(middleware.LimitBody)     // cap request body at 2 MB
 	r.Use(middleware.RateLimit)     // per-IP token bucket (100 req/min, burst 20)
@@ -136,6 +160,7 @@ func main() {
 	slog.Info("Probatus API starting", "port", port)
 	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), r); err != nil {
 		sentry.CaptureException(err)
+		flushSentry()
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}

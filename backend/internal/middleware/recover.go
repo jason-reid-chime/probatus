@@ -30,8 +30,9 @@ func Recoverer(next http.Handler) http.Handler {
 					"path", r.URL.Path,
 				)
 
-				http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":"internal server error"}`))
 			}
 		}()
 		next.ServeHTTP(w, r)
