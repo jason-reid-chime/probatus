@@ -60,3 +60,18 @@ export async function enqueue(
     retries: 0,
   })
 }
+
+/**
+ * Reset retry counter on all dead entries so they can be flushed again.
+ * Called when the user explicitly triggers a manual retry.
+ */
+export async function retryFailed(): Promise<void> {
+  const dead = await db.outbox
+    .filter((e) => e.retries >= MAX_RETRIES)
+    .toArray()
+  await Promise.all(
+    dead.map((e) =>
+      db.outbox.update(e.id!, { retries: 0, last_error: undefined })
+    )
+  )
+}

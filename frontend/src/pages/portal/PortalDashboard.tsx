@@ -91,6 +91,21 @@ export default function PortalDashboard() {
   const dueSoonAssets = assets.filter((a) => getDueStatus(a.next_due_at) === 'due-soon')
   const currentAssets = assets.filter((a) => getDueStatus(a.next_due_at) === 'ok')
 
+  // Assets needing attention = overdue + due within 30 days, sorted by date
+  const thirtyDays = new Date()
+  thirtyDays.setDate(thirtyDays.getDate() + 30)
+  const attentionAssets = assets
+    .filter((a) => {
+      if (!a.next_due_at) return false
+      const due = new Date(a.next_due_at)
+      return due <= thirtyDays
+    })
+    .sort((a, b) => {
+      if (!a.next_due_at) return 1
+      if (!b.next_due_at) return -1
+      return new Date(a.next_due_at).getTime() - new Date(b.next_due_at).getTime()
+    })
+
   return (
     <div className="space-y-6">
       {/* Welcome header */}
@@ -144,6 +159,40 @@ export default function PortalDashboard() {
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">All Current</p>
             <p className="mt-2 text-3xl font-bold text-green-700">{currentAssets.length}</p>
           </div>
+        </div>
+      )}
+
+      {/* Upcoming / overdue callout */}
+      {!loading && !error && attentionAssets.length > 0 && (
+        <div className="bg-white rounded-2xl border border-amber-200 overflow-hidden">
+          <div className="px-5 py-3 bg-amber-50 border-b border-amber-100">
+            <h2 className="text-sm font-semibold text-amber-800">
+              Action Required — {attentionAssets.length} {attentionAssets.length === 1 ? 'instrument' : 'instruments'} overdue or due within 30 days
+            </h2>
+          </div>
+          <ul className="divide-y divide-gray-100">
+            {attentionAssets.map((asset) => {
+              const status = getDueStatus(asset.next_due_at)
+              const makeModel = [asset.manufacturer, asset.model].filter(Boolean).join(' ') || '—'
+              return (
+                <li key={asset.id}>
+                  <button
+                    onClick={() => navigate(`/portal/assets/${asset.id}`)}
+                    className="w-full text-left px-5 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between gap-4"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{asset.tag_id}</p>
+                      <p className="text-sm text-gray-500 truncate">{makeModel}</p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <span className="text-sm text-gray-500">{formatDate(asset.next_due_at)}</span>
+                      <StatusBadge status={status} />
+                    </div>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       )}
 

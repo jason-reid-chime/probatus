@@ -62,7 +62,12 @@ export async function upsertAsset(
     .select()
     .single()
 
-  if (error) throw error
+  if (error) {
+    if (error.code === '23505') {
+      throw new Error('A asset with this Tag ID already exists. Please use a unique tag ID.')
+    }
+    throw error
+  }
 
   const saved = data as LocalAsset
 

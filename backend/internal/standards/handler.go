@@ -176,6 +176,26 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, s)
 }
 
+// Delete removes a master standard belonging to the authenticated tenant.
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM master_standards WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete standard")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "standard not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Update modifies an existing master standard belonging to the authenticated tenant.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())

@@ -2,15 +2,27 @@ package assets
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jasonreid/probatus/internal/middleware"
 )
+
+// isUniqueViolation returns true when err is a PostgreSQL unique-constraint
+// violation (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	return false
+}
 
 // Handler holds the DB pool for the assets resource.
 type Handler struct {
@@ -166,6 +178,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	)
 
 	a, err := scanAsset(row)
+	if isUniqueViolation(err) {
+		writeError(w, http.StatusConflict, "tag ID already exists for this tenant")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create asset")
 		return
@@ -214,6 +230,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	a, err := scanAsset(row)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "asset not found")
+		return
+	}
+	if isUniqueViolation(err) {
+		writeError(w, http.StatusConflict, "tag ID already exists for this tenant")
 		return
 	}
 	if err != nil {

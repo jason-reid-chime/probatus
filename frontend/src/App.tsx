@@ -20,6 +20,7 @@ import TemplateForm from './pages/templates/TemplateForm'
 import PortalDashboard from './pages/portal/PortalDashboard'
 import PortalAssetDetail from './pages/portal/PortalAssetDetail'
 import AuditPackage from './pages/AuditPackage'
+import ApprovalDashboard from './pages/approvals/ApprovalDashboard'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -59,6 +60,7 @@ export default function App() {
               <Route path="templates" element={<TemplateList />} />
               <Route path="templates/new" element={<TemplateForm />} />
               <Route path="templates/:id/edit" element={<TemplateForm />} />
+              <Route path="approvals" element={<ApprovalDashboard />} />
               <Route path="audit" element={<AuditPackage />} />
             </Route>
           </Routes>
