@@ -11,6 +11,7 @@ import {
   fetchAssets,
   upsertAsset as apiUpsertAsset,
 } from '../lib/api/assets'
+import { enqueue } from '../lib/sync/outbox'
 import { useAuth } from './useAuth'
 
 // ---------------------------------------------------------------------------
@@ -88,7 +89,10 @@ export function useAsset(id: string): UseQueryResult<LocalAsset | undefined> {
 }
 
 // ---------------------------------------------------------------------------
-// useUpsertAsset — optimistic mutation
+// useUpsertAsset — offline-first mutation using outbox pattern
+// Writes to Dexie immediately so the UI feels instant even offline,
+// then attempts an API sync with a 5-second timeout.  If the sync fails
+// (or the device is offline), the outbox entry is retried on reconnect.
 // ---------------------------------------------------------------------------
 export function useUpsertAsset() {
   const queryClient = useQueryClient()
@@ -96,48 +100,62 @@ export function useUpsertAsset() {
   const tenantId = profile?.tenant_id ?? ''
 
   return useMutation({
-    mutationFn: (asset: Omit<LocalAsset, 'updated_at'>) =>
-      apiUpsertAsset(asset),
-
-    onMutate: async (newAsset) => {
-      // Cancel in-flight queries
-      await queryClient.cancelQueries({ queryKey: assetKeys.all(tenantId) })
-
-      // Snapshot previous value
-      const previous = queryClient.getQueryData<LocalAsset[]>(
-        assetKeys.all(tenantId),
-      )
-
-      // Optimistically write to Dexie
-      const optimistic: LocalAsset = {
-        ...newAsset,
+    mutationFn: async (asset: Omit<LocalAsset, 'updated_at'>): Promise<LocalAsset> => {
+      const saved: LocalAsset = {
+        ...asset,
         updated_at: new Date().toISOString(),
       }
-      await db.assets.put(optimistic)
 
-      // Optimistically update React Query cache
-      queryClient.setQueryData<LocalAsset[]>(
-        assetKeys.all(tenantId),
-        (old = []) => {
-          const idx = old.findIndex((a) => a.id === optimistic.id)
-          return idx >= 0
-            ? old.map((a) => (a.id === optimistic.id ? optimistic : a))
-            : [...old, optimistic]
-        },
-      )
+      // 1. Write to Dexie immediately (offline-first)
+      await db.assets.put(saved)
 
-      return { previous }
-    },
+      // 2. Enqueue in outbox for guaranteed sync
+      await enqueue({
+        table: 'assets',
+        operation: 'upsert',
+        payload: saved as unknown as Record<string, unknown>,
+      })
 
-    onError: (_err, _newAsset, context) => {
-      // Roll back
-      if (context?.previous) {
-        queryClient.setQueryData(assetKeys.all(tenantId), context.previous)
+      // 3. Opportunistic online sync with 5-second timeout
+      //    (airplane mode can keep navigator.onLine true briefly)
+      if (isOnline()) {
+        try {
+          const withTimeout = <T>(p: Promise<T>): Promise<T> =>
+            Promise.race([
+              p,
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('sync-timeout')), 5000),
+              ),
+            ])
+          const synced = await withTimeout(apiUpsertAsset(asset))
+          // Remove the outbox entry — already synced
+          const entries = await db.outbox
+            .where('table').equals('assets')
+            .and((e) => (e.payload as { id: string }).id === saved.id)
+            .toArray()
+          if (entries.length > 0) {
+            await db.outbox.delete(entries[entries.length - 1].id!)
+          }
+          return synced
+        } catch {
+          // Network error or timeout — outbox will retry when back online
+        }
       }
+
+      return saved
     },
 
     onSuccess: (saved) => {
-      // Update detail cache
+      // Update both list and detail cache
+      queryClient.setQueryData<LocalAsset[]>(
+        assetKeys.all(tenantId),
+        (old = []) => {
+          const idx = old.findIndex((a) => a.id === saved.id)
+          return idx >= 0
+            ? old.map((a) => (a.id === saved.id ? saved : a))
+            : [...old, saved]
+        },
+      )
       queryClient.setQueryData(assetKeys.detail(tenantId, saved.id), saved)
     },
 

@@ -3,6 +3,7 @@ import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import Sidebar from './Sidebar'
 import Header from './Header'
+import SyncStatusBanner from './SyncStatusBanner'
 
 export default function AppShell() {
   const { user, profile, loading } = useAuth()
@@ -40,6 +41,9 @@ export default function AppShell() {
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
+      {/* Offline sync status */}
+      <SyncStatusBanner />
+
       {/* Mobile header */}
       <Header onMenuClick={() => setSidebarOpen(true)} />
 
