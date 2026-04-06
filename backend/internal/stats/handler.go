@@ -1,18 +1,25 @@
 package stats
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
+// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // Handler holds the DB pool for the stats resource.
 type Handler struct {
-	pool *pgxpool.Pool
+	pool querier
 }
 
 // NewHandler creates a new stats Handler.

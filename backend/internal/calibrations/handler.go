@@ -16,15 +16,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jasonreid/probatus/internal/email"
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
+// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // Handler holds the DB pool for the calibrations resource.
 type Handler struct {
-	pool *pgxpool.Pool
+	pool querier
 }
 
 // NewHandler creates a new calibrations Handler.
@@ -422,7 +431,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})
 }
 
-func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, tenantID string) {
+func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID string) {
 	// Use a detached context so the goroutine is not cancelled when the HTTP
 	// handler's context is done.
 	ctx = context.Background()

@@ -188,3 +188,13 @@ func RoleFromCtx(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyRole).(string)
 	return v
 }
+
+// WithTenantID returns a context with the given tenant ID set. Used in tests.
+func WithTenantID(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, ctxKeyTenantID, tenantID)
+}
+
+// WithUserID returns a context with the given user ID set. Used in tests.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, ctxKeyUserID, userID)
+}
