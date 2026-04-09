@@ -330,6 +330,12 @@ export default function CalibrationForm() {
   const [localId] = useState(() => existingRecordId ?? crypto.randomUUID())
   const [recordId] = useState(() => existingRecordId ?? crypto.randomUUID())
 
+  // Stable measurement IDs keyed by point_label. Seeded from DB on edit load,
+  // otherwise generated once on first access. Prevents duplicate rows when the
+  // form is saved multiple times (each helper function calls crypto.randomUUID()
+  // on every render, which would cause new DB rows on every save).
+  const stableMeasurementIds = useRef<Map<string, string>>(new Map())
+
   // Load asset (and existing record if editing) from Dexie on mount
   useEffect(() => {
     if (!assetId) return
@@ -364,6 +370,10 @@ export default function CalibrationForm() {
         const measurements = await db.measurements
           .where('record_id').equals(existingRecordId).toArray()
         if (measurements.length > 0 && a) {
+          // Seed stable ID map so re-saves reuse the same DB-assigned UUIDs
+          for (const m of measurements) {
+            stableMeasurementIds.current.set(m.point_label, m.id)
+          }
           const type = a.instrument_type?.toLowerCase() ?? ''
           if (type === 'pressure') {
             setPressureRows(measurements.map(m => ({
@@ -436,14 +446,25 @@ export default function CalibrationForm() {
   const liveMeasurements: LocalMeasurement[] = useMemo(() => {
     if (!asset) return []
     const type = asset.instrument_type ?? ''
-    if (type === 'pressure') return pressureMeasurements(recordId, pressureRows)
-    if (type === 'temperature') return temperatureMeasurements(recordId, temperatureRows)
-    if (type === 'ph_conductivity') return phMeasurements(recordId, phData)
-    if (type === 'conductivity') return conductivityMeasurements(recordId, conductivityData)
-    if (type === 'level_4_20ma' || type === 'flow') return levelMeasurements(recordId, levelRows)
-    if (type === 'transmitter_4_20ma') return transmitterMeasurements(recordId, transmitterRows)
-    if (type === 'pressure_switch' || type === 'temperature_switch') return switchMeasurements(recordId, switchData, asset)
-    return []
+
+    let raw: LocalMeasurement[]
+    if (type === 'pressure') raw = pressureMeasurements(recordId, pressureRows)
+    else if (type === 'temperature') raw = temperatureMeasurements(recordId, temperatureRows)
+    else if (type === 'ph_conductivity') raw = phMeasurements(recordId, phData)
+    else if (type === 'conductivity') raw = conductivityMeasurements(recordId, conductivityData)
+    else if (type === 'level_4_20ma' || type === 'flow') raw = levelMeasurements(recordId, levelRows)
+    else if (type === 'transmitter_4_20ma') raw = transmitterMeasurements(recordId, transmitterRows)
+    else if (type === 'pressure_switch' || type === 'temperature_switch') raw = switchMeasurements(recordId, switchData, asset)
+    else raw = []
+
+    // Assign stable IDs so that re-saves upsert the same rows rather than
+    // inserting duplicates. IDs are keyed by point_label and generated once
+    // per session (or seeded from the DB when editing an existing record).
+    const idMap = stableMeasurementIds.current
+    return raw.map(m => {
+      if (!idMap.has(m.point_label)) idMap.set(m.point_label, crypto.randomUUID())
+      return { ...m, id: idMap.get(m.point_label)! }
+    })
   }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, recordId])
 
   const result = useMemo(() => {
