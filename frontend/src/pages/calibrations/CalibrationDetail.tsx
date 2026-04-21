@@ -400,6 +400,14 @@ export default function CalibrationDetail() {
             Calibration Record
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">{performedAt}</p>
+          <button
+            type="button"
+            onClick={() => navigate(`/assets/${record.asset_id}`)}
+            className="mt-1 inline-flex items-center gap-1 text-sm text-brand-600 hover:text-brand-700 hover:underline"
+          >
+            <ExternalLink size={13} />
+            View Asset
+          </button>
         </div>
         <StatusBadge status={record.status} />
       </div>
