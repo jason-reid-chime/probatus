@@ -90,6 +90,7 @@ func (h *Handler) checkStandardsDueDate(r *http.Request, tenantID string, standa
 		standardIDs, tenantID,
 	)
 	if err != nil {
+		slog.Error("checkStandardsDueDate: query failed", "tenant_id", tenantID, "error", err)
 		return "failed to validate standards"
 	}
 	defer rows.Close()
@@ -98,6 +99,7 @@ func (h *Handler) checkStandardsDueDate(r *http.Request, tenantID string, standa
 		var name string
 		var dueAt time.Time
 		if err := rows.Scan(&name, &dueAt); err != nil {
+			slog.Error("checkStandardsDueDate: scan failed", "tenant_id", tenantID, "error", err)
 			return "failed to validate standards"
 		}
 		if dueAt.Before(today) {
@@ -133,6 +135,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(r.Context(), query, args...)
 	if err != nil {
+		slog.Error("calibrations.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query calibrations")
 		return
 	}
@@ -148,12 +151,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			&rec.CertificateURL, &rec.Notes, &rec.LocalID,
 		)
 		if err != nil {
+			slog.Error("calibrations.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan calibration")
 			return
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
+		slog.Error("calibrations.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating calibrations")
 		return
 	}
@@ -188,6 +193,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("calibrations.Get: query failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query calibration")
 		return
 	}
@@ -202,6 +208,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
+		slog.Error("calibrations.Get: measurements query failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query measurements")
 		return
 	}
@@ -212,12 +219,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		var m Measurement
 		if err := mRows.Scan(&m.ID, &m.RecordID, &m.PointLabel, &m.StandardValue,
 			&m.MeasuredValue, &m.Unit, &m.Pass, &m.ErrorPct, &m.Notes); err != nil {
+			slog.Error("calibrations.Get: measurement scan failed", "record_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan measurement")
 			return
 		}
 		rec.Measurements = append(rec.Measurements, m)
 	}
 	if err := mRows.Err(); err != nil {
+		slog.Error("calibrations.Get: measurement iteration error", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating measurements")
 		return
 	}
@@ -274,6 +283,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {
+		slog.Error("calibrations.Create: begin transaction failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
@@ -290,6 +300,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
 	).Scan(&recID)
 	if err != nil {
+		slog.Error("calibrations.Create: insert failed", "tenant_id", tenantID, "asset_id", body.AssetID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create calibration record")
 		return
 	}
@@ -303,6 +314,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			recID, m.PointLabel, m.StandardValue, m.MeasuredValue, m.Unit, m.Pass, m.ErrorPct, m.Notes,
 		)
 		if err != nil {
+			slog.Error("calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to insert measurement")
 			return
 		}
@@ -315,15 +327,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			recID, stdID,
 		)
 		if err != nil {
+			slog.Error("calibrations.Create: standard link failed", "record_id", recID, "standard_id", stdID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to link standard")
 			return
 		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("calibrations.Create: commit failed", "record_id", recID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
+
+	slog.Info("calibrations.Create: record created", "record_id", recID, "tenant_id", tenantID, "asset_id", body.AssetID)
 
 	// Return the created record.
 	w.Header().Set("Content-Type", "application/json")
@@ -369,6 +385,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		body.SalesNumber, body.FlagNumber, body.Notes, body.LocalID,
 	)
 	if err != nil {
+		slog.Error("calibrations.Update: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update calibration")
 		return
 	}
@@ -407,6 +424,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		id, tenantID, userID, now, body.SupervisorSignature,
 	)
 	if err != nil {
+		slog.Error("calibrations.Approve: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to approve calibration")
 		return
 	}
@@ -414,6 +432,8 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "calibration not found")
 		return
 	}
+
+	slog.Info("calibrations.Approve: record approved", "record_id", id, "tenant_id", tenantID, "supervisor_id", userID)
 
 	// Fire off the certificate email in the background so the HTTP response is
 	// never delayed or failed due to email delivery issues.
@@ -649,7 +669,7 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	pdfFilename := fmt.Sprintf("certificate-%s.pdf", rec.localID)
 
 	payload := email.EmailPayload{
-		From:    "certificates@probatus.app",
+		From:    "info@valatix.com",
 		To:      []string{customerContact},
 		Subject: fmt.Sprintf("Calibration Certificate — %s (%s)", asset.tagID, rec.performedAt.Format("2006-01-02")),
 		Html:    htmlEmail,

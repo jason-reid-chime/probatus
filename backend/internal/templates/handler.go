@@ -2,6 +2,7 @@ package templates
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -99,6 +100,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		slog.Error("templates.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query templates")
 		return
 	}
@@ -108,12 +110,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		t, err := scanTemplate(rows)
 		if err != nil {
+			slog.Error("templates.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan template")
 			return
 		}
 		templates = append(templates, t)
 	}
 	if err := rows.Err(); err != nil {
+		slog.Error("templates.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating templates")
 		return
 	}
@@ -139,6 +143,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("templates.Get: query failed", "template_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query template")
 		return
 	}
@@ -183,6 +188,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	t, err := scanTemplate(row)
 	if err != nil {
+		slog.Error("templates.Create: insert failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create template")
 		return
 	}
@@ -225,6 +231,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("templates.Update: update failed", "template_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update template")
 		return
 	}
@@ -242,6 +249,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
+		slog.Error("templates.Delete: exec failed", "template_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete template")
 		return
 	}

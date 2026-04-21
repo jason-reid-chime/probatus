@@ -316,9 +316,10 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	var data certData
 	var techID, supervisorID string
 	err := h.pool.QueryRow(r.Context(),
-		`SELECT id::text, local_id, sales_number, flag_number, performed_at, approved_at,
-		        status, tech_signature, supervisor_signature, notes,
-		        technician_id::text, COALESCE(supervisor_id::text,'')
+		`SELECT id::text, COALESCE(local_id,''), COALESCE(sales_number,''),
+		        COALESCE(flag_number,''), performed_at, approved_at, status,
+		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
+		        COALESCE(notes,''), technician_id::text, COALESCE(supervisor_id::text,'')
 		 FROM calibration_records
 		 WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID,
@@ -329,6 +330,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		&techID, &supervisorID,
 	)
 	if err != nil {
+		slog.Error("Generate: record query failed", "id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusNotFound, "calibration not found")
 		return
 	}
@@ -336,8 +338,10 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	// --- Load asset + customer ---
 	var assetID string
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT cr.asset_id::text, a.tag_id, a.serial_number, a.manufacturer, a.model,
-		        a.instrument_type, a.location, a.range_min, a.range_max, a.range_unit,
+		`SELECT cr.asset_id::text, a.tag_id, COALESCE(a.serial_number,''),
+		        COALESCE(a.manufacturer,''), COALESCE(a.model,''),
+		        a.instrument_type, COALESCE(a.location,''),
+		        a.range_min, a.range_max, COALESCE(a.range_unit,''),
 		        COALESCE(c.name,''), COALESCE(c.contact,'')
 		 FROM calibration_records cr
 		 JOIN assets a ON a.id = cr.asset_id
@@ -351,6 +355,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		&data.CustomerName, &data.CustomerContact,
 	)
 	if err != nil {
+		slog.Error("Generate: asset query failed", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load asset details")
 		return
 	}
@@ -379,11 +384,16 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 
 	// --- Load measurements ---
 	mRows, err := h.pool.Query(r.Context(),
-		`SELECT point_label, standard_value, measured_value, unit, error_pct, pass, notes
-		 FROM calibration_measurements WHERE record_id = $1 ORDER BY id`,
+		`SELECT point_label,
+		        COALESCE(standard_value, 0), COALESCE(measured_value, 0),
+		        COALESCE(unit,''), COALESCE(error_pct, 0),
+		        COALESCE(pass, false), COALESCE(notes,'')
+		 FROM calibration_measurements WHERE record_id = $1
+		 ORDER BY standard_value ASC NULLS LAST`,
 		id,
 	)
 	if err != nil {
+		slog.Error("Generate: measurements query failed", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load measurements")
 		return
 	}
@@ -392,6 +402,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		var m measurementRow
 		if err := mRows.Scan(&m.PointLabel, &m.StandardValue, &m.MeasuredValue,
 			&m.Unit, &m.ErrorPct, &m.Pass, &m.Notes); err != nil {
+			slog.Error("Generate: measurement scan failed", "id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan measurement")
 			return
 		}
@@ -401,13 +412,15 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 
 	// --- Load standards used ---
 	sRows, err := h.pool.Query(r.Context(),
-		`SELECT ms.name, ms.serial_number, ms.model, ms.manufacturer, ms.certificate_ref, ms.due_at
+		`SELECT ms.name, ms.serial_number, COALESCE(ms.model,''),
+		        COALESCE(ms.manufacturer,''), COALESCE(ms.certificate_ref,''), ms.due_at
 		 FROM calibration_standards_used csu
 		 JOIN master_standards ms ON ms.id = csu.standard_id
 		 WHERE csu.record_id = $1`,
 		id,
 	)
 	if err != nil {
+		slog.Error("Generate: standards query failed", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load standards")
 		return
 	}
@@ -416,6 +429,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		var s standardRow
 		if err := sRows.Scan(&s.Name, &s.SerialNumber, &s.Model, &s.Manufacturer,
 			&s.CertificateRef, &s.DueAt); err != nil {
+			slog.Error("Generate: standard scan failed", "id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan standard")
 			return
 		}
@@ -439,12 +453,14 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpl, err := template.New("cert").Funcs(funcMap).Parse(certHTMLTemplate)
 	if err != nil {
+		slog.Error("certificates.Generate: template parse failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to parse certificate template")
 		return
 	}
 
 	var htmlBuf bytes.Buffer
 	if err := tmpl.Execute(&htmlBuf, data); err != nil {
+		slog.Error("certificates.Generate: template execute failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to render certificate template")
 		return
 	}
@@ -452,6 +468,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	// --- Generate PDF (Gotenberg if available, pure-Go fallback otherwise) ---
 	pdfBytes, err := generateCertPDF(r.Context(), htmlBuf, data)
 	if err != nil {
+		slog.Error("certificates.Generate: PDF generation failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate PDF")
 		return
 	}
@@ -478,6 +495,7 @@ func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.loadCertData(r, id, tenantID)
 	if err != nil {
+		slog.Error("certificates.SendEmail: failed to load cert data", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusNotFound, "calibration not found")
 		return
 	}
@@ -493,19 +511,29 @@ func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
 			return t.AddDate(1, 0, 0).Format("02/Jan/2006")
 		},
 	}
-	tmpl, _ := template.New("cert").Funcs(funcMap).Parse(certHTMLTemplate)
+	tmpl, err := template.New("cert").Funcs(funcMap).Parse(certHTMLTemplate)
+	if err != nil {
+		slog.Error("certificates.SendEmail: template parse failed", "record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to parse certificate template")
+		return
+	}
 	var htmlBuf bytes.Buffer
-	tmpl.Execute(&htmlBuf, data)
+	if err := tmpl.Execute(&htmlBuf, data); err != nil {
+		slog.Error("certificates.SendEmail: template execute failed", "record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to render certificate template")
+		return
+	}
 
 	pdfBytes, err := generateCertPDF(r.Context(), htmlBuf, data)
 	if err != nil {
+		slog.Error("certificates.SendEmail: PDF generation failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate PDF")
 		return
 	}
 
 	pdfFilename := fmt.Sprintf("certificate-%s.pdf", data.LocalID)
 	payload := email.EmailPayload{
-		From:    "certificates@probatus.app",
+		From:    "info@valatix.com",
 		To:      []string{body.Email},
 		Subject: fmt.Sprintf("Calibration Certificate — %s (%s)", data.AssetTag, data.PerformedAt.Format("2006-01-02")),
 		Html:    fmt.Sprintf("<p>Please find attached the calibration certificate for <strong>%s</strong>.</p>", data.AssetTag),
@@ -531,9 +559,10 @@ func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, 
 	var data certData
 	var techID, supervisorID string
 	err := h.pool.QueryRow(r.Context(),
-		`SELECT id::text, local_id, sales_number, flag_number, performed_at, approved_at,
-		        status, tech_signature, supervisor_signature, notes,
-		        technician_id::text, COALESCE(supervisor_id::text,'')
+		`SELECT id::text, COALESCE(local_id,''), COALESCE(sales_number,''),
+		        COALESCE(flag_number,''), performed_at, approved_at, status,
+		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
+		        COALESCE(notes,''), technician_id::text, COALESCE(supervisor_id::text,'')
 		 FROM calibration_records
 		 WHERE id = $1 AND tenant_id = $2`,
 		id, tenantID,

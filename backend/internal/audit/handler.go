@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -422,6 +423,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 
 	recRows, err := h.pool.Query(r.Context(), recQuery, args...)
 	if err != nil {
+		slog.Error("audit.Generate: calibration records query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load calibration records")
 		return
 	}
@@ -435,6 +437,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 			&rec.AssetTagID, &rec.AssetDescription, &rec.InstrumentType, &rec.CustomerName,
 			&rec.TechnicianName, &rec.SupervisorName,
 		); err != nil {
+			slog.Error("audit.Generate: record scan failed", "tenant_id", tenantID, "error", err)
 			continue
 		}
 		rec.PerformedAt = performedAt.Format("2006-01-02 15:04")
