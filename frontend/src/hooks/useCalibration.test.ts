@@ -161,7 +161,7 @@ describe('useCalibrationsByAsset', () => {
           sortBy: vi.fn().mockResolvedValue(local),
         }),
       }),
-    } as any)
+    } as unknown as ReturnType<typeof db.calibration_records.where>)
 
     const { result } = renderHook(() => useCalibrationsByAsset('asset-1'), { wrapper: makeWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -220,7 +220,7 @@ describe('useMeasurementsByRecord', () => {
       equals: vi.fn().mockReturnValue({
         toArray: vi.fn().mockResolvedValue(unsorted),
       }),
-    } as any)
+    } as unknown as ReturnType<typeof db.measurements.where>)
 
     const { result } = renderHook(() => useMeasurementsByRecord('rec-1'), { wrapper: makeWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -236,7 +236,7 @@ describe('useMeasurementsByRecord', () => {
       equals: vi.fn().mockReturnValue({
         toArray: vi.fn().mockResolvedValue(ms),
       }),
-    } as any)
+    } as unknown as ReturnType<typeof db.measurements.where>)
 
     const { result } = renderHook(() => useMeasurementsByRecord('rec-1'), { wrapper: makeWrapper() })
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
@@ -309,7 +309,7 @@ describe('useSaveCalibration', () => {
     const record = makeRecord()
     const saved = { ...record, id: 'saved-id' } as LocalCalibrationRecord
     vi.mocked(upsertCalibrationRecord).mockResolvedValueOnce(saved)
-    vi.mocked(upsertMeasurements).mockResolvedValueOnce(undefined as any)
+    vi.mocked(upsertMeasurements).mockResolvedValueOnce(undefined as unknown as void)
     vi.mocked(upsertCalibrationStandards).mockResolvedValueOnce(undefined)
 
     const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
@@ -323,7 +323,7 @@ describe('useSaveCalibration', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.mocked(isOnline).mockReturnValue(true)
     vi.mocked(upsertCalibrationRecord).mockImplementationOnce(
-      () => new Promise((_resolve, _reject) => { /* never resolves */ }),
+      () => new Promise(() => { /* never resolves — tests the sync timeout */ }),
     )
     const record = makeRecord()
 

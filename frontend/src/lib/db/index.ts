@@ -58,7 +58,7 @@ export interface LocalMeasurement {
 // -------------------------------------------------------
 // Outbox: queued mutations waiting to sync
 // -------------------------------------------------------
-export type OutboxOperation = 'upsert' | 'delete'
+export type OutboxOperation = 'upsert' | 'delete' | 'replace_standards'
 export type OutboxTable = 'calibration_records' | 'calibration_measurements' | 'assets' | 'calibration_standards_used'
 
 export interface OutboxEntry {

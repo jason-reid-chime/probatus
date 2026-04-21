@@ -95,7 +95,7 @@ export async function enqueue(
 export async function enqueueStandardsReplace(recordId: string, standardIds: string[]): Promise<void> {
   // Remove any previous pending replace for this record to avoid stale sets
   const existing = await db.outbox
-    .filter((e) => e.operation === ('replace_standards' as any) && (e.payload as any).record_id === recordId)
+    .filter((e) => e.operation === 'replace_standards' && (e.payload['record_id'] as string) === recordId)
     .toArray()
   if (existing.length > 0) {
     await db.outbox.bulkDelete(existing.map((e) => e.id!))
@@ -103,8 +103,8 @@ export async function enqueueStandardsReplace(recordId: string, standardIds: str
 
   await db.outbox.add({
     table: 'calibration_standards_used',
-    operation: 'replace_standards' as any,
-    payload: { record_id: recordId, standard_ids: standardIds } as any,
+    operation: 'replace_standards',
+    payload: { record_id: recordId, standard_ids: standardIds },
     created_at: new Date().toISOString(),
     retries: 0,
   })
