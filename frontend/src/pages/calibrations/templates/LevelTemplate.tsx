@@ -60,7 +60,7 @@ export default function LevelTemplate({ rows, onChange }: LevelTemplateProps) {
             const errorPct = hasValue
               ? calc4_20mAErrorPct(row.pct, outNum)
               : NaN
-            const pass = hasValue ? isPass(errorPct) : null
+            const pass = hasValue && isFinite(errorPct) ? isPass(errorPct) : null
 
             return (
               <tr key={row.pct} className="border-t border-gray-200">

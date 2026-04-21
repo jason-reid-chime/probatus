@@ -131,8 +131,9 @@ func main() {
 		r.Put("/calibrations/{id}", calibrationsHandler.Update)
 		r.Post("/calibrations/{id}/approve", calibrationsHandler.Approve)
 		r.Post("/calibrations/{id}/certificate", certificatesHandler.Generate)
+			r.Post("/calibrations/{id}/send-email", certificatesHandler.SendEmail)
 
-		// Master Standards
+			// Master Standards
 		r.Get("/standards", standardsHandler.List)
 		r.Post("/standards", standardsHandler.Create)
 		r.Get("/standards/{id}", standardsHandler.Get)

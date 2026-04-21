@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { CheckCircle, XCircle } from 'lucide-react'
 import type { LocalAsset } from '../../../lib/db'
-import { calcErrorPct, isPass } from '../../../utils/calibrationMath'
+import { isPass } from '../../../utils/calibrationMath'
 
 export interface PressureRow {
   pct: number
@@ -33,11 +33,18 @@ export function buildDefaultPressureRows(asset: LocalAsset): PressureRow[] {
   }))
 }
 
+function calcPressureErrorPct(standard: number, measured: number, span: number): number {
+  if (span === 0) return NaN
+  return Math.abs(measured - standard) / span * 100
+}
+
 export default function PressureTemplate({
   asset,
   rows,
   onChange,
 }: PressureTemplateProps) {
+  const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
+
   function handleChange(
     index: number,
     field: 'asFound' | 'asLeft',
@@ -79,9 +86,9 @@ export default function PressureTemplate({
             const asLeftNum = parseFloat(row.asLeft)
             const hasValue = row.asLeft !== '' && !isNaN(asLeftNum)
             const errorPct = hasValue
-              ? calcErrorPct(row.standardValue, asLeftNum)
+              ? calcPressureErrorPct(row.standardValue, asLeftNum, span)
               : NaN
-            const pass = hasValue ? isPass(errorPct) : null
+            const pass = hasValue && isFinite(errorPct) ? isPass(errorPct) : null
 
             return (
               <tr key={row.pct} className="border-t border-gray-200">

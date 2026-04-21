@@ -62,11 +62,15 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
 function pressureMeasurements(
   recordId: string,
   rows: PressureRow[],
+  asset: LocalAsset,
 ): LocalMeasurement[] {
+  const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
   return rows.map((row) => {
     const asLeftNum = parseFloat(row.asLeft)
     const hasLeft = row.asLeft !== '' && !isNaN(asLeftNum)
-    const errorPct = hasLeft ? calcErrorPct(row.standardValue, asLeftNum) : undefined
+    const errorPct = hasLeft && span !== 0
+      ? Math.abs(asLeftNum - row.standardValue) / span * 100
+      : undefined
     const pass = hasLeft && errorPct !== undefined && isFinite(errorPct)
       ? isPass(errorPct)
       : undefined
@@ -95,11 +99,9 @@ function temperatureMeasurements(
       row.measured !== '' &&
       !isNaN(refNum) &&
       !isNaN(measNum)
-    const errorPct = hasValue ? calcErrorPct(refNum, measNum) : undefined
-    const pass =
-      hasValue && errorPct !== undefined && isFinite(errorPct)
-        ? isPass(errorPct)
-        : undefined
+    const rawErr = hasValue ? calcErrorPct(refNum, measNum) : undefined
+    const errorPct = rawErr !== undefined && isFinite(rawErr) ? rawErr : undefined
+    const pass = errorPct !== undefined ? isPass(errorPct) : undefined
     return {
       id: crypto.randomUUID(),
       record_id: recordId,
@@ -438,7 +440,7 @@ export default function CalibrationForm() {
   const liveMeasurements: LocalMeasurement[] = useMemo(() => {
     if (!asset) return []
     const type = asset.instrument_type ?? ''
-    if (type === 'pressure') return pressureMeasurements(recordId, pressureRows)
+    if (type === 'pressure') return pressureMeasurements(recordId, pressureRows, asset)
     if (type === 'temperature') return temperatureMeasurements(recordId, temperatureRows)
     if (type === 'ph_conductivity') return phMeasurements(recordId, phData)
     if (type === 'conductivity') return conductivityMeasurements(recordId, conductivityData)

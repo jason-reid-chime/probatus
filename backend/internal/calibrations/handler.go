@@ -589,10 +589,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	sRows.Close()
 
 	// -------------------------------------------------------------------------
-	// 7. Render the certificate HTML and call Gotenberg for a PDF.
+	// 7. Render the certificate and generate a PDF.
 	// -------------------------------------------------------------------------
 	approvedNow := time.Now().UTC()
-	htmlBody := buildCertHTML(buildCertHTMLParams{
+	certParams := buildCertHTMLParams{
 		recordID:       recordID,
 		localID:        rec.localID,
 		tenantName:     tenantName,
@@ -617,9 +617,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 		rangeUnit:      asset.rangeUnit,
 		measurements:   measurements,
 		standards:      standards,
-	})
+	}
+	htmlBody := buildCertHTML(certParams)
 
-	pdfBytes, err := generatePDFViaGotenberg(ctx, htmlBody)
+	pdfBytes, err := generatePDF(ctx, htmlBody, certParams)
 	if err != nil {
 		slog.Error("sendCertificateEmail: failed to generate PDF", "record_id", recordID, "error", err)
 		return
@@ -670,12 +671,26 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 		"record_id", recordID, "customer_email", customerContact, "asset_tag", asset.tagID)
 }
 
-// generatePDFViaGotenberg posts the rendered HTML to Gotenberg and returns the PDF bytes.
-func generatePDFViaGotenberg(ctx context.Context, htmlContent string) ([]byte, error) {
+// generatePDF attempts to render a PDF via Gotenberg if GOTENBERG_URL is set
+// and reachable. If Gotenberg is unavailable the function falls back to a
+// pure-Go minimal PDF so that certificate emails are never blocked by the
+// absence of the Gotenberg sidecar (e.g. on Railway where only the API
+// container runs).
+func generatePDF(ctx context.Context, htmlContent string, p buildCertHTMLParams) ([]byte, error) {
 	gotenbergURL := os.Getenv("GOTENBERG_URL")
-	if gotenbergURL == "" {
-		gotenbergURL = "http://localhost:3000"
+	if gotenbergURL != "" {
+		pdfBytes, err := callGotenberg(ctx, gotenbergURL, htmlContent)
+		if err == nil {
+			return pdfBytes, nil
+		}
+		slog.Warn("generatePDF: Gotenberg unavailable, falling back to built-in PDF",
+			"gotenberg_url", gotenbergURL, "error", err)
 	}
+	return buildMinimalPDF(p), nil
+}
+
+// callGotenberg posts the rendered HTML to Gotenberg and returns the PDF bytes.
+func callGotenberg(ctx context.Context, gotenbergURL, htmlContent string) ([]byte, error) {
 	endpoint := gotenbergURL + "/forms/chromium/convert/html"
 
 	var buf bytes.Buffer
@@ -712,6 +727,195 @@ func generatePDFViaGotenberg(ctx context.Context, htmlContent string) ([]byte, e
 		return nil, fmt.Errorf("gotenberg: failed to read response body: %w", err)
 	}
 	return pdfBuf.Bytes(), nil
+}
+
+// buildMinimalPDF produces a valid, human-readable PDF-1.4 document from the
+// certificate parameters without any external dependencies. The output is a
+// single-page A4 document with a monospaced text layout. It is intentionally
+// simple — the Gotenberg path produces a nicer result, but this ensures email
+// delivery always succeeds even when Gotenberg is not deployed.
+func buildMinimalPDF(p buildCertHTMLParams) []byte {
+	lines := buildCertTextLines(p)
+
+	// Encode each line as a PDF string literal, escaping special chars.
+	escapePDF := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `(`, `\(`)
+		s = strings.ReplaceAll(s, `)`, `\)`)
+		return s
+	}
+
+	// Build the content stream: position text at top-left with 12pt Courier.
+	const (
+		fontSize  = 10.0
+		leading   = 14.0
+		marginL   = 50.0
+		pageH     = 841.89 // A4 height in points
+		startY    = 800.0
+	)
+
+	var cs strings.Builder
+	cs.WriteString("BT\n")
+	cs.WriteString("/F1 10 Tf\n")
+	y := startY
+	for _, line := range lines {
+		fmt.Fprintf(&cs, "%.2f %.2f Td\n", marginL, y)
+		fmt.Fprintf(&cs, "(%s) Tj\n", escapePDF(line))
+		y -= leading
+		// Reset X each line by going back to marginL from current position.
+		// Use absolute positioning instead: move to fixed X each line.
+		if y < 50 {
+			break // stop before running off the bottom
+		}
+		// Reset Td to absolute by undoing the cumulative offset each iteration.
+		// Simpler: use Tm (text matrix) for each line.
+		_ = pageH
+	}
+	cs.WriteString("ET\n")
+
+	// Re-render using Tm for reliable absolute positioning.
+	var cs2 strings.Builder
+	cs2.WriteString("BT\n")
+	cs2.WriteString("/F1 10 Tf\n")
+	y = startY
+	for _, line := range lines {
+		fmt.Fprintf(&cs2, "1 0 0 1 %.2f %.2f Tm\n", marginL, y)
+		fmt.Fprintf(&cs2, "(%s) Tj\n", escapePDF(line))
+		y -= leading
+		if y < 50 {
+			break
+		}
+	}
+	cs2.WriteString("ET\n")
+
+	stream := cs2.String()
+	streamLen := len(stream)
+
+	// Build PDF objects.
+	// Object layout:
+	//   1: Catalog
+	//   2: Pages
+	//   3: Page
+	//   4: Font (Courier)
+	//   5: Content stream
+
+	var pdf bytes.Buffer
+	pdf.WriteString("%PDF-1.4\n")
+
+	offsets := make([]int, 6) // 1-indexed, index 0 unused
+
+	offsets[1] = pdf.Len()
+	pdf.WriteString("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+
+	offsets[2] = pdf.Len()
+	pdf.WriteString("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+
+	offsets[3] = pdf.Len()
+	pdf.WriteString("3 0 obj\n<< /Type /Page /Parent 2 0 R\n")
+	pdf.WriteString("   /MediaBox [0 0 595.28 841.89]\n")
+	pdf.WriteString("   /Contents 5 0 R\n")
+	pdf.WriteString("   /Resources << /Font << /F1 4 0 R >> >>\n")
+	pdf.WriteString(">>\nendobj\n")
+
+	offsets[4] = pdf.Len()
+	pdf.WriteString("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n")
+
+	offsets[5] = pdf.Len()
+	fmt.Fprintf(&pdf, "5 0 obj\n<< /Length %d >>\nstream\n", streamLen)
+	pdf.WriteString(stream)
+	pdf.WriteString("\nendstream\nendobj\n")
+
+	xrefOffset := pdf.Len()
+	fmt.Fprintf(&pdf, "xref\n0 6\n0000000000 65535 f \n")
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&pdf, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", xrefOffset)
+
+	return pdf.Bytes()
+}
+
+// buildCertTextLines converts certificate parameters into plain text lines
+// suitable for embedding in a PDF content stream.
+func buildCertTextLines(p buildCertHTMLParams) []string {
+	var lines []string
+	add := func(s string) { lines = append(lines, s) }
+	sep := func() { add(strings.Repeat("-", 80)) }
+
+	add(p.tenantName)
+	add("CALIBRATION CERTIFICATE")
+	add("ISO/IEC 17025 Compliant Calibration Record")
+	sep()
+
+	add("CERTIFICATE INFORMATION")
+	add(fmt.Sprintf("  Certificate No : %s", p.localID))
+	add(fmt.Sprintf("  Sales Order    : %s", p.salesNumber))
+	add(fmt.Sprintf("  Flag Number    : %s", p.flagNumber))
+	add(fmt.Sprintf("  Date Performed : %s", p.performedAt.Format("2006-01-02")))
+	if p.approvedAt != nil {
+		add(fmt.Sprintf("  Date Approved  : %s", p.approvedAt.Format("2006-01-02")))
+	}
+	add(fmt.Sprintf("  Status         : %s", strings.ToUpper(p.status)))
+	add(fmt.Sprintf("  Generated      : %s", time.Now().UTC().Format("2006-01-02 15:04 UTC")))
+	sep()
+
+	add("INSTRUMENT UNDER TEST")
+	add(fmt.Sprintf("  Tag ID          : %s", p.assetTag))
+	add(fmt.Sprintf("  Serial Number   : %s", p.serialNumber))
+	add(fmt.Sprintf("  Manufacturer    : %s", p.manufacturer))
+	add(fmt.Sprintf("  Model           : %s", p.model))
+	add(fmt.Sprintf("  Instrument Type : %s", p.instrumentType))
+	add(fmt.Sprintf("  Location        : %s", p.location))
+	if p.rangeMin != nil && p.rangeMax != nil {
+		add(fmt.Sprintf("  Range           : %.4g - %.4g %s", *p.rangeMin, *p.rangeMax, p.rangeUnit))
+	}
+	sep()
+
+	add("CALIBRATION MEASUREMENTS")
+	add(fmt.Sprintf("  %-20s %12s %12s %6s %8s %6s  Notes", "Point", "Standard", "Measured", "Unit", "Error%", "Result"))
+	for _, m := range p.measurements {
+		result := "PASS"
+		if !m.Pass {
+			result = "FAIL"
+		}
+		add(fmt.Sprintf("  %-20s %12.6g %12.6g %6s %8.4f %6s  %s",
+			m.PointLabel, m.StandardValue, m.MeasuredValue, m.Unit, m.ErrorPct, result, m.Notes))
+	}
+	sep()
+
+	if len(p.standards) > 0 {
+		add("REFERENCE STANDARDS USED")
+		add(fmt.Sprintf("  %-20s %-15s %-15s %-15s %-15s %s",
+			"Name", "Serial", "Model", "Manufacturer", "Cert Ref", "Due At"))
+		for _, s := range p.standards {
+			dueAt := ""
+			if s.DueAt != nil {
+				dueAt = s.DueAt.Format("2006-01-02")
+			}
+			add(fmt.Sprintf("  %-20s %-15s %-15s %-15s %-15s %s",
+				s.Name, s.SerialNumber, s.Model, s.Manufacturer, s.CertificateRef, dueAt))
+		}
+		sep()
+	}
+
+	if p.notes != "" {
+		add("NOTES")
+		add(fmt.Sprintf("  %s", p.notes))
+		sep()
+	}
+
+	add("SIGNATURES")
+	add(fmt.Sprintf("  Technician : %s", p.techName))
+	if p.supervisorName != "" {
+		add(fmt.Sprintf("  Supervisor : %s", p.supervisorName))
+	}
+	sep()
+
+	add(fmt.Sprintf("%s - Calibration Services", p.tenantName))
+	add("This certificate shall not be reproduced except in full without written")
+	add("approval of the issuing laboratory.")
+
+	return lines
 }
 
 // certMeasRow holds a single calibration measurement for certificate rendering.

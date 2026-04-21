@@ -2,18 +2,23 @@ package certificates
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/jasonreid/probatus/internal/email"
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
@@ -444,50 +449,306 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- Call Gotenberg ---
-	gotenbergURL := os.Getenv("GOTENBERG_URL")
-	if gotenbergURL == "" {
-		gotenbergURL = "http://localhost:3000"
-	}
-	endpoint := gotenbergURL + "/forms/chromium/convert/html"
-
-	var multipartBuf bytes.Buffer
-	mpw := multipart.NewWriter(&multipartBuf)
-
-	filePart, err := mpw.CreateFormFile("files", "index.html")
+	// --- Generate PDF (Gotenberg if available, pure-Go fallback otherwise) ---
+	pdfBytes, err := generateCertPDF(r.Context(), htmlBuf, data)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build multipart request")
-		return
-	}
-	filePart.Write(htmlBuf.Bytes())
-	mpw.Close()
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint,
-		bytes.NewReader(multipartBuf.Bytes()))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create Gotenberg request")
-		return
-	}
-	req.Header.Set("Content-Type", mpw.FormDataContentType())
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("Gotenberg request failed: %v", err))
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		writeError(w, http.StatusBadGateway,
-			fmt.Sprintf("Gotenberg returned status %d", resp.StatusCode))
+		writeError(w, http.StatusInternalServerError, "failed to generate PDF")
 		return
 	}
 
-	// --- Stream PDF back to the caller ---
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf(`attachment; filename="certificate-%s.pdf"`, data.LocalID))
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, resp.Body)
+	w.Write(pdfBytes)
+}
+
+// SendEmail generates a certificate PDF and emails it to the requested address.
+func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	var body struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" {
+		writeError(w, http.StatusBadRequest, "email is required")
+		return
+	}
+
+	data, err := h.loadCertData(r, id, tenantID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "calibration not found")
+		return
+	}
+
+	funcMap := template.FuncMap{
+		"deref": func(f *float64) float64 {
+			if f == nil {
+				return 0
+			}
+			return *f
+		},
+		"recalDate": func(t time.Time) string {
+			return t.AddDate(1, 0, 0).Format("02/Jan/2006")
+		},
+	}
+	tmpl, _ := template.New("cert").Funcs(funcMap).Parse(certHTMLTemplate)
+	var htmlBuf bytes.Buffer
+	tmpl.Execute(&htmlBuf, data)
+
+	pdfBytes, err := generateCertPDF(r.Context(), htmlBuf, data)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate PDF")
+		return
+	}
+
+	pdfFilename := fmt.Sprintf("certificate-%s.pdf", data.LocalID)
+	payload := email.EmailPayload{
+		From:    "certificates@probatus.app",
+		To:      []string{body.Email},
+		Subject: fmt.Sprintf("Calibration Certificate — %s (%s)", data.AssetTag, data.PerformedAt.Format("2006-01-02")),
+		Html:    fmt.Sprintf("<p>Please find attached the calibration certificate for <strong>%s</strong>.</p>", data.AssetTag),
+		Attachments: []email.Attachment{
+			{Filename: pdfFilename, Content: base64.StdEncoding.EncodeToString(pdfBytes)},
+		},
+	}
+
+	if err := email.Send(payload); err != nil {
+		slog.Error("SendEmail: failed to send certificate email", "record_id", id, "to", body.Email, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to send email")
+		return
+	}
+
+	slog.Info("SendEmail: certificate emailed", "record_id", id, "to", body.Email)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
+}
+
+// loadCertData fetches all data needed to render a certificate for the given record.
+func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, error) {
+	var data certData
+	var techID, supervisorID string
+	err := h.pool.QueryRow(r.Context(),
+		`SELECT id::text, local_id, sales_number, flag_number, performed_at, approved_at,
+		        status, tech_signature, supervisor_signature, notes,
+		        technician_id::text, COALESCE(supervisor_id::text,'')
+		 FROM calibration_records
+		 WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID,
+	).Scan(
+		&data.RecordID, &data.LocalID, &data.SalesNumber, &data.FlagNumber,
+		&data.PerformedAt, &data.ApprovedAt, &data.Status,
+		&data.TechSignature, &data.SupervisorSig, &data.Notes,
+		&techID, &supervisorID,
+	)
+	if err != nil {
+		return data, err
+	}
+
+	h.pool.QueryRow(r.Context(),
+		`SELECT cr.asset_id::text, a.tag_id, a.serial_number, a.manufacturer, a.model,
+		        a.instrument_type, a.location, a.range_min, a.range_max, a.range_unit,
+		        COALESCE(c.name,''), COALESCE(c.contact,'')
+		 FROM calibration_records cr
+		 JOIN assets a ON a.id = cr.asset_id
+		 LEFT JOIN customers c ON c.id = a.customer_id AND c.tenant_id = cr.tenant_id
+		 WHERE cr.id = $1 AND cr.tenant_id = $2`,
+		id, tenantID,
+	).Scan(
+		new(string), &data.AssetTag, &data.SerialNumber, &data.Manufacturer,
+		&data.Model, &data.InstrumentType, &data.Location,
+		&data.RangeMin, &data.RangeMax, &data.RangeUnit,
+		&data.CustomerName, &data.CustomerContact,
+	)
+
+	h.pool.QueryRow(r.Context(), `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&data.TenantName)
+	if data.TenantName == "" {
+		data.TenantName = "Calibration Services"
+	}
+	h.pool.QueryRow(r.Context(), `SELECT full_name FROM profiles WHERE id = $1`, techID).Scan(&data.TechName)
+	if supervisorID != "" {
+		h.pool.QueryRow(r.Context(), `SELECT full_name FROM profiles WHERE id = $1`, supervisorID).Scan(&data.SupervisorName)
+	}
+
+	mRows, _ := h.pool.Query(r.Context(),
+		`SELECT point_label, standard_value, measured_value, unit, error_pct, pass, notes
+		 FROM calibration_measurements WHERE record_id = $1 ORDER BY standard_value ASC NULLS LAST`, id)
+	if mRows != nil {
+		defer mRows.Close()
+		for mRows.Next() {
+			var m measurementRow
+			mRows.Scan(&m.PointLabel, &m.StandardValue, &m.MeasuredValue, &m.Unit, &m.ErrorPct, &m.Pass, &m.Notes)
+			data.Measurements = append(data.Measurements, m)
+		}
+	}
+
+	sRows, _ := h.pool.Query(r.Context(),
+		`SELECT ms.name, ms.serial_number, ms.model, ms.manufacturer, ms.certificate_ref, ms.due_at
+		 FROM calibration_standards_used csu
+		 JOIN master_standards ms ON ms.id = csu.standard_id
+		 WHERE csu.record_id = $1`, id)
+	if sRows != nil {
+		defer sRows.Close()
+		for sRows.Next() {
+			var s standardRow
+			sRows.Scan(&s.Name, &s.SerialNumber, &s.Model, &s.Manufacturer, &s.CertificateRef, &s.DueAt)
+			data.Standards = append(data.Standards, s)
+		}
+	}
+
+	data.GeneratedAt = time.Now().UTC()
+	return data, nil
+}
+
+// generateCertPDF tries Gotenberg if GOTENBERG_URL is set, falls back to a
+// pure-Go PDF so certificate download always works without a Gotenberg sidecar.
+func generateCertPDF(ctx context.Context, htmlBuf bytes.Buffer, data certData) ([]byte, error) {
+	if url := os.Getenv("GOTENBERG_URL"); url != "" {
+		if pdf, err := callGotenberg(ctx, url, htmlBuf); err == nil {
+			return pdf, nil
+		} else {
+			slog.Warn("generateCertPDF: Gotenberg unavailable, using built-in PDF", "error", err)
+		}
+	}
+	return buildMinimalCertPDF(data), nil
+}
+
+func callGotenberg(ctx context.Context, gotenbergURL string, htmlBuf bytes.Buffer) ([]byte, error) {
+	var multipartBuf bytes.Buffer
+	mpw := multipart.NewWriter(&multipartBuf)
+	filePart, err := mpw.CreateFormFile("files", "index.html")
+	if err != nil {
+		return nil, err
+	}
+	filePart.Write(htmlBuf.Bytes())
+	mpw.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		gotenbergURL+"/forms/chromium/convert/html", bytes.NewReader(multipartBuf.Bytes()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", mpw.FormDataContentType())
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gotenberg status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func buildMinimalCertPDF(d certData) []byte {
+	escape := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `(`, `\(`)
+		s = strings.ReplaceAll(s, `)`, `\)`)
+		return s
+	}
+
+	var lines []string
+	add := func(s string) { lines = append(lines, s) }
+	sep := func() { add(strings.Repeat("-", 72)) }
+
+	add(d.TenantName)
+	add("CALIBRATION CERTIFICATE")
+	sep()
+	add(fmt.Sprintf("  Certificate No  : %s", d.LocalID))
+	add(fmt.Sprintf("  Sales Order     : %s", d.SalesNumber))
+	add(fmt.Sprintf("  Flag Number     : %s", d.FlagNumber))
+	add(fmt.Sprintf("  Date Performed  : %s", d.PerformedAt.Format("2006-01-02")))
+	if d.ApprovedAt != nil {
+		add(fmt.Sprintf("  Date Approved   : %s", d.ApprovedAt.Format("2006-01-02")))
+	}
+	add(fmt.Sprintf("  Generated       : %s", d.GeneratedAt.Format("2006-01-02 15:04 UTC")))
+	sep()
+	add("INSTRUMENT UNDER TEST")
+	add(fmt.Sprintf("  Tag ID          : %s", d.AssetTag))
+	add(fmt.Sprintf("  Serial Number   : %s", d.SerialNumber))
+	add(fmt.Sprintf("  Manufacturer    : %s", d.Manufacturer))
+	add(fmt.Sprintf("  Model           : %s", d.Model))
+	add(fmt.Sprintf("  Instrument Type : %s", d.InstrumentType))
+	add(fmt.Sprintf("  Location        : %s", d.Location))
+	if d.RangeMin != nil && d.RangeMax != nil {
+		add(fmt.Sprintf("  Range           : %.4g - %.4g %s", *d.RangeMin, *d.RangeMax, d.RangeUnit))
+	}
+	sep()
+	add("CALIBRATION MEASUREMENTS")
+	add(fmt.Sprintf("  %-20s %12s %12s %6s %8s %6s", "Point", "Standard", "Measured", "Unit", "Error%", "Result"))
+	for _, m := range d.Measurements {
+		result := "PASS"
+		if !m.Pass {
+			result = "FAIL"
+		}
+		add(fmt.Sprintf("  %-20s %12.6g %12.6g %6s %8.4f %6s",
+			m.PointLabel, m.StandardValue, m.MeasuredValue, m.Unit, m.ErrorPct, result))
+	}
+	if len(d.Standards) > 0 {
+		sep()
+		add("REFERENCE STANDARDS USED")
+		for _, s := range d.Standards {
+			due := ""
+			if s.DueAt != nil {
+				due = s.DueAt.Format("2006-01-02")
+			}
+			add(fmt.Sprintf("  %s  S/N:%s  Cert:%s  Due:%s", s.Name, s.SerialNumber, s.CertificateRef, due))
+		}
+	}
+	sep()
+	add("SIGNATURES")
+	add(fmt.Sprintf("  Technician : %s", d.TechName))
+	if d.SupervisorName != "" {
+		add(fmt.Sprintf("  Supervisor : %s", d.SupervisorName))
+	}
+	sep()
+	add("This certificate shall not be reproduced except in full without written")
+	add("approval of the issuing laboratory.")
+
+	const (
+		leading = 14.0
+		marginL = 50.0
+		startY  = 800.0
+	)
+
+	var cs strings.Builder
+	cs.WriteString("BT\n/F1 10 Tf\n")
+	y := startY
+	for _, line := range lines {
+		fmt.Fprintf(&cs, "1 0 0 1 %.2f %.2f Tm\n(%s) Tj\n", marginL, y, escape(line))
+		y -= leading
+		if y < 50 {
+			break
+		}
+	}
+	cs.WriteString("ET\n")
+
+	stream := cs.String()
+	var pdf bytes.Buffer
+	pdf.WriteString("%PDF-1.4\n")
+
+	offs := make([]int, 6)
+	offs[1] = pdf.Len()
+	pdf.WriteString("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+	offs[2] = pdf.Len()
+	pdf.WriteString("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+	offs[3] = pdf.Len()
+	pdf.WriteString("3 0 obj\n<< /Type /Page /Parent 2 0 R\n   /MediaBox [0 0 595.28 841.89]\n   /Contents 5 0 R\n   /Resources << /Font << /F1 4 0 R >> >> >>\nendobj\n")
+	offs[4] = pdf.Len()
+	pdf.WriteString("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n")
+	offs[5] = pdf.Len()
+	fmt.Fprintf(&pdf, "5 0 obj\n<< /Length %d >>\nstream\n%sendstream\nendobj\n", len(stream), stream)
+
+	xrefOffset := pdf.Len()
+	pdf.WriteString("xref\n")
+	fmt.Fprintf(&pdf, "0 6\n0000000000 65535 f \n")
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&pdf, "%010d 00000 n \n", offs[i])
+	}
+	fmt.Fprintf(&pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", xrefOffset)
+	return pdf.Bytes()
 }
