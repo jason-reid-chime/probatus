@@ -401,7 +401,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	userID := middleware.UserIDFromCtx(r.Context())
+	role := middleware.RoleFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
+
+	if role != "supervisor" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only supervisors and admins can approve calibrations")
+		return
+	}
 
 	var body struct {
 		SupervisorSignature string `json:"supervisor_signature"`
@@ -420,7 +426,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		     supervisor_id = $3,
 		     approved_at = $4,
 		     supervisor_signature = COALESCE(NULLIF($5,''), supervisor_signature)
-		 WHERE id = $1 AND tenant_id = $2`,
+		 WHERE id = $1 AND tenant_id = $2 AND status = 'pending_approval'`,
 		id, tenantID, userID, now, body.SupervisorSignature,
 	)
 	if err != nil {
@@ -429,7 +435,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "calibration not found")
+		writeError(w, http.StatusNotFound, "calibration not found or not pending approval")
 		return
 	}
 
@@ -463,9 +469,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 		notes          string
 	}
 	err := pool.QueryRow(ctx,
-		`SELECT local_id, performed_at, technician_id::text,
+		`SELECT COALESCE(local_id,''), performed_at, technician_id::text,
 		        COALESCE(supervisor_id::text,''), asset_id::text,
-		        tech_signature, supervisor_signature, sales_number, flag_number, notes
+		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
+		        COALESCE(sales_number,''), COALESCE(flag_number,''), COALESCE(notes,'')
 		 FROM calibration_records
 		 WHERE id = $1 AND tenant_id = $2`,
 		recordID, tenantID,
@@ -496,8 +503,8 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	var tenantName string
 
 	err = pool.QueryRow(ctx,
-		`SELECT a.tag_id, a.serial_number, a.manufacturer, a.model,
-		        a.instrument_type, a.location, a.range_min, a.range_max, a.range_unit,
+		`SELECT a.tag_id, COALESCE(a.serial_number,''), COALESCE(a.manufacturer,''), COALESCE(a.model,''),
+		        a.instrument_type, COALESCE(a.location,''), a.range_min, a.range_max, COALESCE(a.range_unit,''),
 		        COALESCE(c.name,''), COALESCE(c.contact,'')
 		 FROM assets a
 		 LEFT JOIN customers c ON c.id = a.customer_id AND c.tenant_id = a.tenant_id
@@ -551,7 +558,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	// 5. Load measurements.
 	// -------------------------------------------------------------------------
 	mRows, err := pool.Query(ctx,
-		`SELECT point_label, standard_value, measured_value, unit, error_pct, pass, notes
+		`SELECT point_label,
+		        COALESCE(standard_value, 0), COALESCE(measured_value, 0),
+		        COALESCE(unit,''), COALESCE(error_pct, 0),
+		        COALESCE(pass, false), COALESCE(notes,'')
 		 FROM calibration_measurements WHERE record_id = $1 ORDER BY id`,
 		recordID,
 	)
@@ -585,7 +595,8 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	// 6. Load standards used.
 	// -------------------------------------------------------------------------
 	sRows, err := pool.Query(ctx,
-		`SELECT ms.name, ms.serial_number, ms.model, ms.manufacturer, ms.certificate_ref, ms.due_at
+		`SELECT ms.name, ms.serial_number, COALESCE(ms.model,''), COALESCE(ms.manufacturer,''),
+		        COALESCE(ms.certificate_ref,''), ms.due_at
 		 FROM calibration_standards_used csu
 		 JOIN master_standards ms ON ms.id = csu.standard_id
 		 WHERE csu.record_id = $1`,

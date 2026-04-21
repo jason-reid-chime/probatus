@@ -757,8 +757,9 @@ func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, 
 	}
 
 	h.pool.QueryRow(r.Context(),
-		`SELECT cr.asset_id::text, a.tag_id, a.serial_number, a.manufacturer, a.model,
-		        a.instrument_type, a.location, a.range_min, a.range_max, a.range_unit,
+		`SELECT cr.asset_id::text, a.tag_id, COALESCE(a.serial_number,''),
+		        COALESCE(a.manufacturer,''), COALESCE(a.model,''),
+		        a.instrument_type, COALESCE(a.location,''), a.range_min, a.range_max, COALESCE(a.range_unit,''),
 		        COALESCE(c.name,''), COALESCE(c.contact,'')
 		 FROM calibration_records cr
 		 JOIN assets a ON a.id = cr.asset_id
@@ -782,7 +783,10 @@ func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, 
 	}
 
 	mRows, _ := h.pool.Query(r.Context(),
-		`SELECT point_label, standard_value, measured_value, unit, error_pct, pass, notes
+		`SELECT point_label,
+		        COALESCE(standard_value, 0), COALESCE(measured_value, 0),
+		        COALESCE(unit,''), COALESCE(error_pct, 0),
+		        COALESCE(pass, false), COALESCE(notes,'')
 		 FROM calibration_measurements WHERE record_id = $1 ORDER BY standard_value ASC NULLS LAST`, id)
 	if mRows != nil {
 		defer mRows.Close()
@@ -794,7 +798,8 @@ func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, 
 	}
 
 	sRows, _ := h.pool.Query(r.Context(),
-		`SELECT ms.name, ms.serial_number, ms.model, ms.manufacturer, ms.certificate_ref, ms.due_at
+		`SELECT ms.name, ms.serial_number, COALESCE(ms.model,''), COALESCE(ms.manufacturer,''),
+		        COALESCE(ms.certificate_ref,''), ms.due_at
 		 FROM calibration_standards_used csu
 		 JOIN master_standards ms ON ms.id = csu.standard_id
 		 WHERE csu.record_id = $1`, id)
