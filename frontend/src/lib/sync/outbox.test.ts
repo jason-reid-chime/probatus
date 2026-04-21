@@ -20,6 +20,9 @@ vi.mock('../db/index', () => ({
 vi.mock('../supabase/index', () => ({
   supabase: {
     from: vi.fn(),
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'tok' } } }),
+    },
   },
 }))
 

@@ -30,6 +30,8 @@ vi.mock('../lib/db', () => ({
     },
     outbox: {
       add: vi.fn().mockResolvedValue(undefined),
+      filter: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
+      bulkDelete: vi.fn().mockResolvedValue(undefined),
     },
   },
 }))
@@ -43,6 +45,7 @@ vi.mock('../lib/api/calibrations', () => ({
 
 vi.mock('../lib/sync/outbox', () => ({
   enqueue: vi.fn().mockResolvedValue(undefined),
+  enqueueStandardsReplace: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('../lib/sync/connectivity', () => ({
@@ -68,7 +71,7 @@ import {
   calibrationKeys,
 } from './useCalibration'
 import { fetchCalibrationsByAsset, upsertCalibrationRecord, upsertMeasurements, upsertCalibrationStandards } from '../lib/api/calibrations'
-import { enqueue } from '../lib/sync/outbox'
+import { enqueue, enqueueStandardsReplace } from '../lib/sync/outbox'
 import { isOnline } from '../lib/sync/connectivity'
 import { db } from '../lib/db'
 import type { LocalCalibrationRecord, LocalMeasurement } from '../lib/db'
@@ -277,7 +280,7 @@ describe('useSaveCalibration', () => {
     expect(tables.filter((t) => t === 'calibration_measurements')).toHaveLength(2)
   })
 
-  it('enqueues standard links in outbox when standardIds provided', async () => {
+  it('enqueues standards as a replace operation when standardIds provided', async () => {
     vi.mocked(isOnline).mockReturnValue(false)
     const record = makeRecord()
 
@@ -286,11 +289,7 @@ describe('useSaveCalibration', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
-    const standardCalls = vi.mocked(enqueue).mock.calls.filter(
-      (c) => c[0].table === 'calibration_standards_used',
-    )
-    expect(standardCalls).toHaveLength(2)
-    expect(standardCalls[0][0].payload).toEqual({ record_id: record.id, standard_id: 'std-1' })
+    expect(vi.mocked(enqueueStandardsReplace)).toHaveBeenCalledWith(record.id, ['std-1', 'std-2'])
   })
 
   it('skips online sync when offline', async () => {

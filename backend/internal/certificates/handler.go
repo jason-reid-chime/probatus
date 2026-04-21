@@ -108,202 +108,378 @@ const certHTMLTemplate = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8"/>
 <style>
-  * { box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; font-size: 10px; margin: 20px 28px; color: #111; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px; }
-  .header-left { font-size: 13px; font-weight: bold; line-height: 1.5; }
-  .header-left .company-name { font-size: 15px; font-weight: bold; }
-  .header-right { font-size: 9px; text-align: right; color: #444; line-height: 1.5; }
-  .cert-title { text-align: center; font-size: 16px; font-weight: bold; border: 2px solid #111;
-                padding: 5px; margin: 8px 0; letter-spacing: 1px; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #999; }
-  .grid2-left { border-right: 1px solid #999; }
-  .section-hdr { background: #ddd; font-weight: bold; padding: 3px 6px; border-bottom: 1px solid #999; font-size: 10px; }
-  .kv-table { width: 100%; border-collapse: collapse; }
-  .kv-table td { padding: 3px 6px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
-  .kv-table td:first-child { font-weight: bold; width: 42%; white-space: nowrap; }
-  .device-row { border: 1px solid #999; border-top: none; }
-  .device-inner { padding: 4px 6px; }
-  .device-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
-  .device-cell { padding: 3px 6px; border-right: 1px solid #e0e0e0; }
-  .device-cell:last-child { border-right: none; }
-  .device-label { font-weight: bold; display: block; font-size: 9px; color: #555; }
-  .trace { font-size: 9px; color: #333; margin: 6px 0; line-height: 1.4; border: 1px solid #ccc; padding: 5px 6px; }
-  table.data { width: 100%; border-collapse: collapse; margin-top: 6px; }
-  table.data th { background: #333; color: #fff; padding: 4px 6px; text-align: left; font-size: 9px; border: 1px solid #555; }
-  table.data td { padding: 3px 6px; border: 1px solid #ccc; font-size: 10px; }
-  table.data tr:nth-child(even) td { background: #f5f5f5; }
-  .pass { color: #1a7a3a; font-weight: bold; }
-  .fail { color: #b00020; font-weight: bold; }
-  .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #999; margin-top: 8px; }
-  .bottom-left { border-right: 1px solid #999; }
-  .sig-line { border-top: 1px solid #555; margin: 18px 10px 2px; }
-  .sig-label { font-size: 9px; color: #555; padding: 0 10px; }
-  .footer { margin-top: 10px; font-size: 8px; color: #888; text-align: center; border-top: 1px solid #ddd; padding-top: 4px; }
-  .section-block { border: 1px solid #999; margin-top: 6px; }
-  .section-block-content { padding: 4px; }
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', Arial, sans-serif;
+    font-size: 9.5px;
+    color: #1a1a2e;
+    background: #fff;
+    padding: 0;
+  }
+  /* Outer page frame */
+  .page {
+    margin: 14px 18px;
+    border: 3px solid #1a3a5c;
+    padding: 0;
+    min-height: calc(100vh - 28px);
+    display: flex;
+    flex-direction: column;
+  }
+  /* ── Header band ── */
+  .page-header {
+    background: linear-gradient(135deg, #1a3a5c 0%, #2a5298 100%);
+    color: #fff;
+    padding: 10px 16px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .company-block { flex: 1; }
+  .company-name  { font-size: 16px; font-weight: 700; letter-spacing: 0.4px; }
+  .company-sub   { font-size: 9px; opacity: 0.80; margin-top: 2px; letter-spacing: 0.8px; text-transform: uppercase; }
+  .cert-id-block { text-align: right; }
+  .cert-id-label { font-size: 8px; opacity: 0.75; text-transform: uppercase; letter-spacing: 0.6px; }
+  .cert-id-value { font-size: 13px; font-weight: 700; margin-top: 2px; }
+  /* ── Title banner ── */
+  .title-band {
+    background: #eaf0fb;
+    border-bottom: 2px solid #1a3a5c;
+    border-top: 2px solid #1a3a5c;
+    text-align: center;
+    padding: 5px 0 4px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: #1a3a5c;
+  }
+  /* ── Content area ── */
+  .content { padding: 10px 14px; flex: 1; }
+  /* ── Two-column info grid ── */
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .info-card {
+    border: 1px solid #c8d6e8;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .info-card-full {
+    border: 1px solid #c8d6e8;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .card-hdr {
+    background: #1a3a5c;
+    color: #fff;
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+  }
+  .kv { width: 100%; border-collapse: collapse; }
+  .kv td { padding: 3px 8px; border-bottom: 1px solid #eaf0fb; vertical-align: top; font-size: 9px; }
+  .kv tr:last-child td { border-bottom: none; }
+  .kv td.lbl { color: #4a6080; font-weight: 600; width: 40%; white-space: nowrap; }
+  .kv td.val { color: #1a1a2e; font-weight: 500; }
+  /* ── Instrument row ── */
+  .instrument-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0;
+  }
+  .inst-cell {
+    padding: 4px 8px;
+    border-right: 1px solid #c8d6e8;
+    font-size: 9px;
+  }
+  .inst-cell:last-child { border-right: none; }
+  .inst-lbl { font-size: 7.5px; color: #4a6080; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 2px; }
+  .inst-val  { color: #1a1a2e; font-weight: 600; }
+  /* ── Traceability ── */
+  .trace {
+    background: #f5f8ff;
+    border: 1px solid #c8d6e8;
+    border-left: 3px solid #2a5298;
+    border-radius: 2px;
+    padding: 5px 8px;
+    font-size: 8.5px;
+    color: #334466;
+    line-height: 1.5;
+    margin-bottom: 8px;
+    font-style: italic;
+  }
+  /* ── Data tables ── */
+  table.data { width: 100%; border-collapse: collapse; }
+  table.data thead tr { background: #1a3a5c; }
+  table.data th {
+    color: #fff;
+    padding: 4px 8px;
+    text-align: left;
+    font-size: 8px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+  }
+  table.data td { padding: 3.5px 8px; font-size: 9px; border-bottom: 1px solid #dce8f5; }
+  table.data tbody tr:nth-child(even) td { background: #f5f8ff; }
+  table.data tbody tr:hover td { background: #eaf0fb; }
+  .pass-badge {
+    display: inline-block;
+    background: #d1fae5;
+    color: #065f46;
+    font-weight: 700;
+    font-size: 8px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    letter-spacing: 0.5px;
+    border: 1px solid #6ee7b7;
+  }
+  .fail-badge {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    font-weight: 700;
+    font-size: 8px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    letter-spacing: 0.5px;
+    border: 1px solid #fca5a5;
+  }
+  /* ── Signature block ── */
+  .sig-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .sig-box {
+    border: 1px solid #c8d6e8;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .sig-box-hdr {
+    background: #1a3a5c;
+    color: #fff;
+    font-size: 7.5px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    padding: 3px 8px;
+  }
+  .sig-body { padding: 6px 8px 4px; }
+  .sig-name { font-size: 9px; font-weight: 600; color: #1a1a2e; }
+  .sig-line { border-top: 1px solid #8899bb; margin: 18px 0 3px; }
+  .sig-caption { font-size: 7.5px; color: #6677aa; }
+  /* ── Footer ── */
+  .page-footer {
+    background: #f0f4fa;
+    border-top: 1px solid #c8d6e8;
+    padding: 5px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 7.5px;
+    color: #5566aa;
+  }
+  .footer-legal { font-style: italic; max-width: 70%; }
+  .footer-gen { text-align: right; white-space: nowrap; }
+  /* ── Misc ── */
+  .section-gap { margin-bottom: 8px; }
+  .text-center { text-align: center; }
+  .mono { font-family: 'Courier New', monospace; }
 </style>
 </head>
 <body>
+<div class="page">
 
-<!-- Header -->
-<div class="header">
-  <div class="header-left">
-    <div class="company-name">{{.TenantName}}</div>
-    <div>Calibration Services</div>
-  </div>
-  <div class="header-right">
-    {{if .CustomerName}}{{.CustomerName}}<br/>{{end}}
-    {{if .Location}}{{.Location}}<br/>{{end}}
-  </div>
-</div>
-
-<div class="cert-title">Calibration Certificate</div>
-
-<!-- Internal Data | Customer Data -->
-<div class="grid2">
-  <div class="grid2-left">
-    <div class="section-hdr">Internal Data</div>
-    <table class="kv-table">
-      <tr><td>Calibration #</td><td>{{.LocalID}}</td></tr>
-      <tr><td>Sales Number</td><td>{{.SalesNumber}}</td></tr>
-      <tr><td>Flag Number</td><td>{{.FlagNumber}}</td></tr>
-    </table>
-  </div>
-  <div>
-    <div class="section-hdr">Customer Data</div>
-    <table class="kv-table">
-      <tr><td>Customer</td><td>{{if .CustomerName}}{{.CustomerName}}{{else}}&mdash;{{end}}</td></tr>
-      <tr><td>Location</td><td>{{if .Location}}{{.Location}}{{else}}&mdash;{{end}}</td></tr>
-      <tr><td>Device Tag</td><td>{{.AssetTag}}</td></tr>
-    </table>
-  </div>
-</div>
-
-<!-- Device / Instrument Info -->
-<div class="device-row">
-  <div class="device-inner">
-    <div class="device-grid">
-      <div class="device-cell"><span class="device-label">Description / Type</span>{{.InstrumentType}}</div>
-      <div class="device-cell"><span class="device-label">Make</span>{{.Manufacturer}}</div>
-      <div class="device-cell"><span class="device-label">Model</span>{{.Model}}</div>
+  <!-- ── Header ── -->
+  <div class="page-header">
+    <div class="company-block">
+      <div class="company-name">{{.TenantName}}</div>
+      <div class="company-sub">Calibration Services &bull; Measurement &amp; Instrumentation</div>
     </div>
-    <div class="device-grid" style="margin-top:3px;">
-      <div class="device-cell"><span class="device-label">Serial Number</span>{{.SerialNumber}}</div>
-      <div class="device-cell"><span class="device-label">Range</span>
-        {{if and .RangeMin .RangeMax}}{{printf "%.4g" (deref .RangeMin)}} &ndash; {{printf "%.4g" (deref .RangeMax)}} {{.RangeUnit}}{{else}}&mdash;{{end}}
+    <div class="cert-id-block">
+      <div class="cert-id-label">Certificate No.</div>
+      <div class="cert-id-value mono">{{.LocalID}}</div>
+    </div>
+  </div>
+
+  <!-- ── Title ── -->
+  <div class="title-band">Calibration Certificate</div>
+
+  <!-- ── Content ── -->
+  <div class="content">
+
+    <!-- Reference & Customer -->
+    <div class="info-grid section-gap">
+      <div class="info-card">
+        <div class="card-hdr">Certificate Details</div>
+        <table class="kv">
+          <tr><td class="lbl">Sales Order</td><td class="val">{{if .SalesNumber}}{{.SalesNumber}}{{else}}&mdash;{{end}}</td></tr>
+          <tr><td class="lbl">Flag Number</td><td class="val">{{if .FlagNumber}}{{.FlagNumber}}{{else}}&mdash;{{end}}</td></tr>
+          <tr><td class="lbl">Date Performed</td><td class="val">{{.PerformedAt.Format "02 Jan 2006"}}</td></tr>
+          <tr><td class="lbl">Recal Date</td><td class="val">{{recalDate .PerformedAt}}</td></tr>
+          {{if .ApprovedAt}}<tr><td class="lbl">Approved</td><td class="val">{{.ApprovedAt.Format "02 Jan 2006"}}</td></tr>{{end}}
+        </table>
       </div>
-      <div class="device-cell"></div>
+      <div class="info-card">
+        <div class="card-hdr">Customer Information</div>
+        <table class="kv">
+          <tr><td class="lbl">Customer</td><td class="val">{{if .CustomerName}}{{.CustomerName}}{{else}}&mdash;{{end}}</td></tr>
+          <tr><td class="lbl">Site / Location</td><td class="val">{{if .Location}}{{.Location}}{{else}}&mdash;{{end}}</td></tr>
+          <tr><td class="lbl">Device Tag ID</td><td class="val mono">{{.AssetTag}}</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Instrument Under Test -->
+    <div class="info-card-full section-gap">
+      <div class="card-hdr">Instrument Under Test</div>
+      <div class="instrument-grid">
+        <div class="inst-cell"><span class="inst-lbl">Type / Description</span><span class="inst-val">{{.InstrumentType}}</span></div>
+        <div class="inst-cell"><span class="inst-lbl">Manufacturer</span><span class="inst-val">{{if .Manufacturer}}{{.Manufacturer}}{{else}}&mdash;{{end}}</span></div>
+        <div class="inst-cell"><span class="inst-lbl">Model</span><span class="inst-val">{{if .Model}}{{.Model}}{{else}}&mdash;{{end}}</span></div>
+        <div class="inst-cell"><span class="inst-lbl">Serial Number</span><span class="inst-val mono">{{if .SerialNumber}}{{.SerialNumber}}{{else}}&mdash;{{end}}</span></div>
+        <div class="inst-cell"><span class="inst-lbl">Range</span><span class="inst-val">{{if and .RangeMin .RangeMax}}{{printf "%.4g" (deref .RangeMin)}} &ndash; {{printf "%.4g" (deref .RangeMax)}} {{.RangeUnit}}{{else}}&mdash;{{end}}</span></div>
+        <div class="inst-cell"><span class="inst-lbl">Tag ID</span><span class="inst-val mono">{{.AssetTag}}</span></div>
+      </div>
+    </div>
+
+    <!-- Traceability Statement -->
+    <div class="trace section-gap">
+      <strong>Traceability Statement:</strong> {{.TenantName}} certifies that the accuracies of the measuring equipment used in
+      effecting this calibration are traceable to nationally recognized measurement standards of the National Research Council of
+      Canada (NRC) or the National Institute of Standards and Technology (NIST), or have been derived from accepted values of
+      natural physical constants, in accordance with ISO/IEC 17025 principles.
+    </div>
+
+    {{if .Standards}}
+    <!-- Reference Standards Used -->
+    <div class="info-card-full section-gap">
+      <div class="card-hdr">Reference Standards Used</div>
+      <table class="data">
+        <thead>
+          <tr>
+            <th>Instrument / Standard</th>
+            <th>Serial Number</th>
+            <th>Certificate Reference</th>
+            <th>Next Calibration Due</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Standards}}
+          <tr>
+            <td>{{.Name}}{{if .Model}} ({{.Model}}){{end}}</td>
+            <td class="mono">{{.SerialNumber}}</td>
+            <td class="mono">{{if .CertificateRef}}{{.CertificateRef}}{{else}}&mdash;{{end}}</td>
+            <td>{{if .DueAt}}{{.DueAt.Format "02 Jan 2006"}}{{else}}&mdash;{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+
+    <!-- Calibration Results -->
+    <div class="info-card-full section-gap">
+      <div class="card-hdr">Calibration Results</div>
+      <table class="data">
+        <thead>
+          <tr>
+            <th>Test Point</th>
+            <th>Applied Value</th>
+            <th>As Found</th>
+            <th>As Left</th>
+            <th>Unit</th>
+            <th>Error %</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Measurements}}
+          <tr>
+            <td>{{.PointLabel}}</td>
+            <td class="mono text-center">{{printf "%.6g" .StandardValue}}</td>
+            <td class="mono text-center">{{printf "%.6g" .MeasuredValue}}</td>
+            <td class="mono text-center">{{printf "%.6g" .MeasuredValue}}</td>
+            <td>{{.Unit}}</td>
+            <td class="mono text-center">{{printf "%.4f" .ErrorPct}}</td>
+            <td class="text-center">
+              {{if .Pass}}<span class="pass-badge">PASS</span>{{else}}<span class="fail-badge">FAIL</span>{{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    {{if .Notes}}
+    <div class="info-card-full section-gap">
+      <div class="card-hdr">Notes &amp; Remarks</div>
+      <div style="padding: 6px 8px; font-size: 9px; line-height: 1.5; color: #334466;">{{.Notes}}</div>
+    </div>
+    {{end}}
+
+    <!-- Signature Block -->
+    <div class="sig-grid">
+      <div class="sig-box">
+        <div class="sig-box-hdr">Calibration Technician</div>
+        <div class="sig-body">
+          <div class="sig-name">{{.TechName}}</div>
+          <div class="sig-line"></div>
+          <div class="sig-caption">Authorized Signature &amp; Date</div>
+        </div>
+      </div>
+      {{if .SupervisorName}}
+      <div class="sig-box">
+        <div class="sig-box-hdr">Approved By</div>
+        <div class="sig-body">
+          <div class="sig-name">{{.SupervisorName}}</div>
+          <div class="sig-line"></div>
+          <div class="sig-caption">Supervisor Signature &amp; Date</div>
+        </div>
+      </div>
+      {{else}}
+      <div class="sig-box">
+        <div class="sig-box-hdr">Approved By</div>
+        <div class="sig-body">
+          <div class="sig-name" style="color:#aaa;">&nbsp;</div>
+          <div class="sig-line"></div>
+          <div class="sig-caption">Supervisor Signature &amp; Date</div>
+        </div>
+      </div>
+      {{end}}
+      <div class="sig-box">
+        <div class="sig-box-hdr">For &amp; On Behalf Of</div>
+        <div class="sig-body">
+          <div class="sig-name">{{.TenantName}}</div>
+          <div class="sig-line"></div>
+          <div class="sig-caption">Company Stamp / Seal</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+
+  <!-- ── Footer ── -->
+  <div class="page-footer">
+    <div class="footer-legal">
+      This certificate shall not be reproduced except in full, without the written approval of the issuing laboratory.
+      Results relate only to the item(s) calibrated.
+    </div>
+    <div class="footer-gen">
+      Generated: {{.GeneratedAt.Format "2006-01-02 15:04 UTC"}}
     </div>
   </div>
-</div>
 
-<!-- Traceability Statement -->
-<div class="trace">
-  {{.TenantName}} certifies that the accuracies of the measuring equipment used in effecting the
-  calibration of the above equipment is traceable to nationally recognized standards, either those of
-  the National Research Council (NRC) or the NIST, or have been derived from accepted values of
-  natural physical constants.
-</div>
-
-{{if .Standards}}
-<!-- Standards -->
-<div class="section-block">
-  <div class="section-hdr">Standards</div>
-  <div class="section-block-content">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th>Instrument Serial Number</th>
-          <th>Certificate Ref</th>
-          <th>Date Calibrated</th>
-          <th>Next Date Calibrated</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Standards}}
-        <tr>
-          <td>{{.Name}}{{if .Model}} {{.Model}}{{end}}</td>
-          <td>{{.SerialNumber}}</td>
-          <td>{{.CertificateRef}}</td>
-          <td>&mdash;</td>
-          <td>{{if .DueAt}}{{.DueAt.Format "02/Jan/2006"}}{{else}}&mdash;{{end}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-</div>
-{{end}}
-
-<!-- Calibration Results -->
-<div class="section-block">
-  <div class="section-hdr">Calibration Results</div>
-  <div class="section-block-content">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>Point</th>
-          <th>Applied Value</th>
-          <th>As Found</th>
-          <th>As Left</th>
-          <th>Unit</th>
-          <th>Error %</th>
-          <th>Result</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{range .Measurements}}
-        <tr>
-          <td>{{.PointLabel}}</td>
-          <td>{{printf "%.6g" .StandardValue}}</td>
-          <td>{{printf "%.6g" .MeasuredValue}}</td>
-          <td>{{printf "%.6g" .MeasuredValue}}</td>
-          <td>{{.Unit}}</td>
-          <td>{{printf "%.4f" .ErrorPct}}</td>
-          <td>{{if .Pass}}<span class="pass">PASS</span>{{else}}<span class="fail">FAIL</span>{{end}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div>
-</div>
-
-{{if .Notes}}
-<div class="section-block" style="margin-top:6px;">
-  <div class="section-hdr">Notes</div>
-  <div class="section-block-content">{{.Notes}}</div>
-</div>
-{{end}}
-
-<!-- Technician / Dates -->
-<div class="bottom-grid">
-  <div class="bottom-left">
-    <div class="section-hdr">Technician</div>
-    <table class="kv-table">
-      <tr><td>Completed by</td><td>{{.TechName}}</td></tr>
-      {{if .SupervisorName}}<tr><td>Approved by</td><td>{{.SupervisorName}}</td></tr>{{end}}
-    </table>
-    <div class="sig-line"></div>
-    <div class="sig-label">Signature</div>
-    <div style="height:12px;"></div>
-  </div>
-  <div>
-    <div class="section-hdr">Calibration Date</div>
-    <table class="kv-table">
-      <tr><td>Date Completed</td><td>{{.PerformedAt.Format "02/Jan/2006"}}</td></tr>
-      <tr><td>Recal Date</td><td>{{recalDate .PerformedAt}}</td></tr>
-      {{if .ApprovedAt}}<tr><td>Date Approved</td><td>{{.ApprovedAt.Format "02/Jan/2006"}}</td></tr>{{end}}
-    </table>
-  </div>
-</div>
-
-<div class="footer">
-  {{.TenantName}} &bull; Calibration Services &bull;
-  This certificate shall not be reproduced except in full without written approval of the issuing laboratory.
-  &bull; Generated: {{.GeneratedAt.Format "2006-01-02 15:04 UTC"}}
-</div>
+</div><!-- /page -->
 </body>
 </html>`
 

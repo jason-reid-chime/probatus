@@ -13,7 +13,7 @@ import {
   upsertMeasurements,
   upsertCalibrationStandards,
 } from '../lib/api/calibrations'
-import { enqueue } from '../lib/sync/outbox'
+import { enqueue, enqueueStandardsReplace } from '../lib/sync/outbox'
 
 function sortMeasurements(measurements: LocalMeasurement[]): LocalMeasurement[] {
   return [...measurements].sort((a, b) => {
@@ -166,15 +166,9 @@ export function useSaveCalibration() {
         })
       }
 
-      // 4. Enqueue standard links in outbox (delete+re-insert happens in the
-      //    online path; outbox handles inserts for offline support)
-      for (const standard_id of standardIds) {
-        await enqueue({
-          table: 'calibration_standards_used',
-          operation: 'upsert',
-          payload: { record_id: record.id, standard_id },
-        })
-      }
+      // 4. Enqueue standards as a replace operation so deletions are captured.
+      //    A single replace_standards entry replaces all prior ones for this record.
+      await enqueueStandardsReplace(record.id, standardIds)
 
       // 5. Attempt online sync opportunistically — skip entirely if offline.
       //    5-second timeout guards against airplane-mode where onLine stays true.
@@ -191,6 +185,22 @@ export function useSaveCalibration() {
           const saved = await withTimeout(upsertCalibrationRecord(record))
           await withTimeout(upsertMeasurements(measurements))
           await withTimeout(upsertCalibrationStandards(record.id, standardIds))
+
+          // Clean up outbox entries now that sync succeeded — prevents double-flush
+          const outboxEntries = await db.outbox
+            .filter((e) => {
+              const p = e.payload as Record<string, unknown>
+              return (
+                (e.table === 'calibration_records' && p['id'] === record.id) ||
+                (e.table === 'calibration_measurements' && typeof p['record_id'] === 'string' && p['record_id'] === record.id) ||
+                (e.table === 'calibration_standards_used' && typeof p['record_id'] === 'string' && p['record_id'] === record.id)
+              )
+            })
+            .toArray()
+          if (outboxEntries.length > 0) {
+            await db.outbox.bulkDelete(outboxEntries.map((e) => e.id!))
+          }
+
           return saved
         } catch {
           // Network error or timeout — outbox will retry when back online

@@ -75,7 +75,7 @@ function makeChain(result: { data?: unknown; error?: unknown } = {}) {
 describe('fetchCalibrationsByAsset', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(db.calibration_records.bulkPut).mockResolvedValue(undefined)
+    vi.mocked(db.calibration_records.bulkPut).mockResolvedValue(undefined as any)
   })
 
   it('queries supabase with the correct table, filter, and order', async () => {
