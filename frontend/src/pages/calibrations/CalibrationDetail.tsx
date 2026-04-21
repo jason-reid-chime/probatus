@@ -551,10 +551,16 @@ export default function CalibrationDetail() {
       )}
 
       {/* External certificate upload / view */}
-      {(record.status === 'approved' || record.status === 'in_progress') && (
-        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
-          <h2 className="text-base font-semibold text-gray-800">External Certificate</h2>
-          {record.certificate_url ? (
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+        <h2 className="text-base font-semibold text-gray-800">External Certificate</h2>
+        {record.certificate_url ? (
+          <div className="space-y-3">
+            <embed
+              src={record.certificate_url}
+              type="application/pdf"
+              className="w-full rounded-lg border border-gray-200"
+              style={{ height: '600px' }}
+            />
             <a
               href={record.certificate_url}
               target="_blank"
@@ -562,30 +568,30 @@ export default function CalibrationDetail() {
               className="inline-flex items-center gap-2 text-brand-600 hover:text-brand-700 font-medium text-sm underline underline-offset-2"
             >
               <ExternalLink size={16} />
-              View Certificate PDF
+              Open in new tab
             </a>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-sm text-gray-500">Attach a PDF certificate from an external calibration lab.</p>
-              <label className={`w-full inline-flex items-center justify-center gap-2 border border-dashed border-gray-300 hover:border-brand-400 bg-gray-50 hover:bg-brand-50 text-gray-600 hover:text-brand-700 font-medium text-sm rounded-xl min-h-[48px] px-4 py-3 cursor-pointer transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
-                <Upload size={16} />
-                {uploading ? 'Uploading…' : 'Upload Certificate PDF'}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".pdf"
-                  className="sr-only"
-                  onChange={handleCertificateUpload}
-                  disabled={uploading}
-                />
-              </label>
-              {uploadError && (
-                <p className="text-sm text-red-600">{uploadError}</p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-500">Attach a PDF certificate from an external calibration lab.</p>
+            <label className={`w-full inline-flex items-center justify-center gap-2 border border-dashed border-gray-300 hover:border-brand-400 bg-gray-50 hover:bg-brand-50 text-gray-600 hover:text-brand-700 font-medium text-sm rounded-xl min-h-[48px] px-4 py-3 cursor-pointer transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
+              <Upload size={16} />
+              {uploading ? 'Uploading…' : 'Upload Certificate PDF'}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                className="sr-only"
+                onChange={handleCertificateUpload}
+                disabled={uploading}
+              />
+            </label>
+            {uploadError && (
+              <p className="text-sm text-red-600">{uploadError}</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

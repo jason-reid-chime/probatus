@@ -668,8 +668,12 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 
 	pdfFilename := fmt.Sprintf("certificate-%s.pdf", rec.localID)
 
+	fromEmail := os.Getenv("RESEND_FROM_EMAIL")
+	if fromEmail == "" {
+		fromEmail = "onboarding@resend.dev"
+	}
 	payload := email.EmailPayload{
-		From:    "info@valatix.com",
+		From:    fromEmail,
 		To:      []string{customerContact},
 		Subject: fmt.Sprintf("Calibration Certificate — %s (%s)", asset.tagID, rec.performedAt.Format("2006-01-02")),
 		Html:    htmlEmail,

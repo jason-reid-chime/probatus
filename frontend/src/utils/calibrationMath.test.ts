@@ -27,6 +27,10 @@ describe('calcErrorPct', () => {
     expect(calcErrorPct(0, 10)).toBeNaN()
   })
 
+  it('returns 0 when both standard and measured are 0 (perfect match, no division)', () => {
+    expect(calcErrorPct(0, 0)).toBe(0)
+  })
+
   it('handles fractional standard values', () => {
     expect(calcErrorPct(4, 4.08)).toBeCloseTo(2)
   })
@@ -98,6 +102,15 @@ describe('isPass', () => {
   it('fails for Infinity error', () => {
     expect(isPass(Infinity)).toBe(false)
     expect(isPass(-Infinity)).toBe(false)
+  })
+
+  it('passes only for exactly 0 when tolerance is 0', () => {
+    expect(isPass(0, 0)).toBe(true)
+  })
+
+  it('fails for any non-zero error when tolerance is 0', () => {
+    expect(isPass(0.001, 0)).toBe(false)
+    expect(isPass(-0.001, 0)).toBe(false)
   })
 })
 
@@ -174,5 +187,27 @@ describe('overallResult', () => {
       measurement({ error_pct: undefined, pass: undefined }),
     ]
     expect(overallResult(ms)).toBe('INCOMPLETE')
+  })
+
+  it('returns INCOMPLETE when mixing PASS, FAIL, and INCOMPLETE measurements (INCOMPLETE short-circuits before FAIL check)', () => {
+    // The function iterates and returns INCOMPLETE on the first incomplete it encounters,
+    // before it can evaluate whether a fail also exists.
+    const ms = [
+      measurement({ error_pct: 0, pass: true }),           // PASS
+      measurement({ error_pct: undefined, pass: undefined }), // INCOMPLETE
+      measurement({ error_pct: 5, pass: false }),           // FAIL
+    ]
+    expect(overallResult(ms)).toBe('INCOMPLETE')
+  })
+
+  it('returns FAIL (not INCOMPLETE) when all measurements are evaluated and one fails', () => {
+    // All measurements have finite error_pct and defined pass values,
+    // but one is false → should return FAIL not INCOMPLETE.
+    const ms = [
+      measurement({ error_pct: 0, pass: true }),
+      measurement({ error_pct: 0.5, pass: true }),
+      measurement({ error_pct: 2.5, pass: false }),
+    ]
+    expect(overallResult(ms)).toBe('FAIL')
   })
 })

@@ -532,8 +532,12 @@ func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pdfFilename := fmt.Sprintf("certificate-%s.pdf", data.LocalID)
+	fromEmail := os.Getenv("RESEND_FROM_EMAIL")
+	if fromEmail == "" {
+		fromEmail = "onboarding@resend.dev"
+	}
 	payload := email.EmailPayload{
-		From:    "info@valatix.com",
+		From:    fromEmail,
 		To:      []string{body.Email},
 		Subject: fmt.Sprintf("Calibration Certificate — %s (%s)", data.AssetTag, data.PerformedAt.Format("2006-01-02")),
 		Html:    fmt.Sprintf("<p>Please find attached the calibration certificate for <strong>%s</strong>.</p>", data.AssetTag),
