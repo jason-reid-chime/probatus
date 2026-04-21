@@ -14,6 +14,14 @@ import {
 } from '../lib/api/calibrations'
 import { enqueue } from '../lib/sync/outbox'
 
+function sortMeasurements(measurements: LocalMeasurement[]): LocalMeasurement[] {
+  return [...measurements].sort((a, b) => {
+    const aVal = a.standard_value ?? Infinity
+    const bVal = b.standard_value ?? Infinity
+    return aVal - bVal
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
@@ -96,7 +104,7 @@ export function useMeasurementsByRecord(
         .where('record_id')
         .equals(recordId)
         .toArray()
-      if (local.length > 0) return local
+      if (local.length > 0) return sortMeasurements(local)
 
       // Attempt remote fetch
       const { supabase } = await import('../lib/supabase')
@@ -104,10 +112,11 @@ export function useMeasurementsByRecord(
         .from('calibration_measurements')
         .select('*')
         .eq('record_id', recordId)
+        .order('standard_value', { ascending: true })
       if (error) throw error
       const measurements = (data ?? []) as LocalMeasurement[]
       await db.measurements.bulkPut(measurements)
-      return measurements
+      return sortMeasurements(measurements)
     },
     enabled: !!recordId,
     staleTime: 1000 * 60 * 5,
