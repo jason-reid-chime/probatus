@@ -11,6 +11,7 @@ import {
   fetchCalibrationsByAsset,
   upsertCalibrationRecord,
   upsertMeasurements,
+  upsertCalibrationStandards,
 } from '../lib/api/calibrations'
 import { enqueue } from '../lib/sync/outbox'
 
@@ -131,6 +132,7 @@ export function useMeasurementsByRecord(
 export interface SaveCalibrationInput {
   record: LocalCalibrationRecord
   measurements: LocalMeasurement[]
+  standardIds?: string[]
 }
 
 export function useSaveCalibration() {
@@ -140,6 +142,7 @@ export function useSaveCalibration() {
     mutationFn: async ({
       record,
       measurements,
+      standardIds = [],
     }: SaveCalibrationInput): Promise<LocalCalibrationRecord> => {
       // 1. Write to Dexie immediately (offline-first)
       await db.calibration_records.put(record)
@@ -154,8 +157,7 @@ export function useSaveCalibration() {
         payload: record as unknown as Record<string, unknown>,
       })
 
-      // 3. Enqueue measurements in outbox (one entry per measurement for
-      //    granular retry; bulk is fine too but per-record is safer)
+      // 3. Enqueue measurements in outbox
       for (const m of measurements) {
         await enqueue({
           table: 'calibration_measurements',
@@ -164,9 +166,18 @@ export function useSaveCalibration() {
         })
       }
 
-      // 4. Attempt online sync opportunistically — skip entirely if offline.
-      //    Wrap in a 5-second timeout so airplane-mode (where navigator.onLine
-      //    briefly stays true) doesn't cause the save to hang.
+      // 4. Enqueue standard links in outbox (delete+re-insert happens in the
+      //    online path; outbox handles inserts for offline support)
+      for (const standard_id of standardIds) {
+        await enqueue({
+          table: 'calibration_standards_used',
+          operation: 'upsert',
+          payload: { record_id: record.id, standard_id },
+        })
+      }
+
+      // 5. Attempt online sync opportunistically — skip entirely if offline.
+      //    5-second timeout guards against airplane-mode where onLine stays true.
       if (isOnline()) {
         try {
           const withTimeout = <T>(p: Promise<T>): Promise<T> =>
@@ -179,6 +190,7 @@ export function useSaveCalibration() {
 
           const saved = await withTimeout(upsertCalibrationRecord(record))
           await withTimeout(upsertMeasurements(measurements))
+          await withTimeout(upsertCalibrationStandards(record.id, standardIds))
           return saved
         } catch {
           // Network error or timeout — outbox will retry when back online

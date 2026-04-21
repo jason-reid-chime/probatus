@@ -27,9 +27,10 @@ export async function flushOutbox(): Promise<void> {
 }
 
 const CONFLICT_COLUMN: Record<string, string> = {
-  calibration_records:     'id',
-  calibration_measurements: 'id',
-  assets:                  'id',
+  calibration_records:       'id',
+  calibration_measurements:  'id',
+  assets:                    'id',
+  calibration_standards_used: 'record_id,standard_id',
 }
 
 async function processEntry(entry: OutboxEntry): Promise<void> {

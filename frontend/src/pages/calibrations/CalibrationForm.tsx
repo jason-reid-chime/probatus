@@ -8,6 +8,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useSaveCalibration } from '../../hooks/useCalibration'
 import { overallResult, calcErrorPct, isPass, calc4_20mAErrorPct } from '../../utils/calibrationMath'
 import TemplatePicker from '../../components/calibrations/TemplatePicker'
+import StandardPicker from '../../components/standards/StandardPicker'
 import type { CalibrationTemplate } from '../../types'
 
 import PressureTemplate, {
@@ -321,6 +322,7 @@ export default function CalibrationForm() {
   const [conductivityData, setConductivityData] = useState<ConductivityData>(buildDefaultConductivityData())
   const [transmitterRows, setTransmitterRows] = useState<TransmitterRow[]>([])
 
+  const [selectedStandardIds, setSelectedStandardIds] = useState<string[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
@@ -540,6 +542,7 @@ export default function CalibrationForm() {
       await saveCalibration.mutateAsync({
         record,
         measurements: liveMeasurements,
+        standardIds: selectedStandardIds,
       })
 
       setToast(isOnline() ? 'Saved' : 'Saved offline — will sync when online')
@@ -600,13 +603,16 @@ export default function CalibrationForm() {
         </p>
       </div>
 
-      {/* No master standard warning */}
-      <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-800">
-        <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-        <span>
-          No master standard selected. You can still record data — standard
-          traceability can be linked later.
-        </span>
+      {/* Master standards */}
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+        <h2 className="text-base font-semibold text-gray-800">Master Standards Used</h2>
+        {selectedStandardIds.length === 0 && (
+          <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+            <span>No standard selected — traceability will not be recorded.</span>
+          </div>
+        )}
+        <StandardPicker selected={selectedStandardIds} onChange={setSelectedStandardIds} />
       </div>
 
       {/* Template picker button */}
