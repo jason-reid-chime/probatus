@@ -188,3 +188,13 @@ func RoleFromCtx(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyRole).(string)
 	return v
 }
+
+// WithTenantID injects a tenant ID into the context. Useful in tests.
+func WithTenantID(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, ctxKeyTenantID, tenantID)
+}
+
+// WithUserID injects a user ID into the context. Useful in tests.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, ctxKeyUserID, userID)
+}

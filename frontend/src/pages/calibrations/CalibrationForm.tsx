@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle, XCircle, LayoutTemplate, X } from 'lucide-react'
 import { db } from '../../lib/db'
@@ -334,6 +334,10 @@ export default function CalibrationForm() {
   const [localId] = useState(() => existingRecordId ?? crypto.randomUUID())
   const [recordId] = useState(() => existingRecordId ?? crypto.randomUUID())
 
+  // Stable measurement IDs keyed by point_label — prevents new UUIDs on every render
+  // which would cause upsert to insert duplicates instead of updating existing rows.
+  const stableMeasurementIds = useRef<Map<string, string>>(new Map())
+
   // Load asset (and existing record if editing) from Dexie on mount
   useEffect(() => {
     if (!assetId) return
@@ -367,6 +371,10 @@ export default function CalibrationForm() {
         // Load existing measurements and restore rows
         const measurements = await db.measurements
           .where('record_id').equals(existingRecordId).toArray()
+        // Seed stable ID map so re-saves update existing rows rather than inserting new ones
+        for (const m of measurements) {
+          stableMeasurementIds.current.set(m.point_label, m.id)
+        }
         if (measurements.length > 0 && a) {
           const type = a.instrument_type?.toLowerCase() ?? ''
           if (type === 'pressure') {
@@ -440,14 +448,22 @@ export default function CalibrationForm() {
   const liveMeasurements: LocalMeasurement[] = useMemo(() => {
     if (!asset) return []
     const type = asset.instrument_type ?? ''
-    if (type === 'pressure') return pressureMeasurements(recordId, pressureRows, asset)
-    if (type === 'temperature') return temperatureMeasurements(recordId, temperatureRows)
-    if (type === 'ph_conductivity') return phMeasurements(recordId, phData)
-    if (type === 'conductivity') return conductivityMeasurements(recordId, conductivityData)
-    if (type === 'level_4_20ma' || type === 'flow') return levelMeasurements(recordId, levelRows)
-    if (type === 'transmitter_4_20ma') return transmitterMeasurements(recordId, transmitterRows)
-    if (type === 'pressure_switch' || type === 'temperature_switch') return switchMeasurements(recordId, switchData, asset)
-    return []
+    let raw: LocalMeasurement[] = []
+    if (type === 'pressure') raw = pressureMeasurements(recordId, pressureRows, asset)
+    else if (type === 'temperature') raw = temperatureMeasurements(recordId, temperatureRows)
+    else if (type === 'ph_conductivity') raw = phMeasurements(recordId, phData)
+    else if (type === 'conductivity') raw = conductivityMeasurements(recordId, conductivityData)
+    else if (type === 'level_4_20ma' || type === 'flow') raw = levelMeasurements(recordId, levelRows)
+    else if (type === 'transmitter_4_20ma') raw = transmitterMeasurements(recordId, transmitterRows)
+    else if (type === 'pressure_switch' || type === 'temperature_switch') raw = switchMeasurements(recordId, switchData, asset)
+
+    // Assign stable IDs by point_label so re-saves update rows instead of inserting duplicates
+    return raw.map((m) => {
+      if (!stableMeasurementIds.current.has(m.point_label)) {
+        stableMeasurementIds.current.set(m.point_label, crypto.randomUUID())
+      }
+      return { ...m, id: stableMeasurementIds.current.get(m.point_label)! }
+    })
   }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, recordId])
 
   const result = useMemo(() => {

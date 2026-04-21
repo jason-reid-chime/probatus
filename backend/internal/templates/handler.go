@@ -1,20 +1,28 @@
 package templates
 
 import (
+	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
+// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 // Handler holds the DB pool for the templates resource.
 type Handler struct {
-	pool *pgxpool.Pool
+	pool querier
 }
 
 // NewHandler creates a new templates Handler.
@@ -100,7 +108,6 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		slog.Error("templates.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query templates")
 		return
 	}
@@ -110,14 +117,12 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		t, err := scanTemplate(rows)
 		if err != nil {
-			slog.Error("templates.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan template")
 			return
 		}
 		templates = append(templates, t)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("templates.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating templates")
 		return
 	}
@@ -143,7 +148,6 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("templates.Get: query failed", "template_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query template")
 		return
 	}
@@ -188,7 +192,6 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	t, err := scanTemplate(row)
 	if err != nil {
-		slog.Error("templates.Create: insert failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create template")
 		return
 	}
@@ -231,7 +234,6 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("templates.Update: update failed", "template_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update template")
 		return
 	}
@@ -249,7 +251,6 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
-		slog.Error("templates.Delete: exec failed", "template_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete template")
 		return
 	}
