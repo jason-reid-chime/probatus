@@ -10,6 +10,13 @@ vi.mock('react-router-dom', async (orig) => ({
   useNavigate: () => mockNavigate,
 }))
 vi.mock('../../hooks/useAssets', () => ({ useAsset: vi.fn() }))
+vi.mock('../../hooks/useCalibration', () => ({ useCalibrationsByAsset: vi.fn().mockReturnValue({ data: [], isLoading: false }) }))
+vi.mock('../../lib/supabase', () => ({
+  supabase: {
+    from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: [] }) }),
+    auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
+  },
+}))
 
 import { useAsset } from '../../hooks/useAssets'
 import AssetDetail from './AssetDetail'

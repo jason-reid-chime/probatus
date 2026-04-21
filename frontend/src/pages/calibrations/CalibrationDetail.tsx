@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Upload, Send } from 'lucide-react'
@@ -151,19 +151,50 @@ function MeasurementsTable({
 function useSyncStatus(recordId: string) {
   const [pendingCount, setPendingCount] = useState<number | null>(null)
 
-  useMemo(() => {
+  useEffect(() => {
     db.outbox
       .filter((e) => {
         const payload = e.payload as Record<string, unknown>
-        return (
-          e.table === 'calibration_records' && payload['id'] === recordId
-        )
+        return e.table === 'calibration_records' && payload['id'] === recordId
       })
       .count()
       .then(setPendingCount)
   }, [recordId])
 
   return pendingCount
+}
+
+// ---------------------------------------------------------------------------
+// Standards used for this calibration record
+// ---------------------------------------------------------------------------
+interface StandardSummary {
+  id: string
+  name: string
+  serial_number: string
+  manufacturer: string | null
+  due_at: string
+}
+
+function useStandardsUsed(recordId: string) {
+  const [standards, setStandards] = useState<StandardSummary[]>([])
+
+  useEffect(() => {
+    if (!recordId) return
+    supabase
+      .from('calibration_standards_used')
+      .select('standard_id, master_standards(id, name, serial_number, manufacturer, due_at)')
+      .eq('record_id', recordId)
+      .then(({ data }) => {
+        if (!data) return
+        setStandards(
+          data
+            .map((row) => row.master_standards as unknown as StandardSummary)
+            .filter(Boolean)
+        )
+      })
+  }, [recordId])
+
+  return standards
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +231,8 @@ export default function CalibrationDetail() {
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailSent, setEmailSent] = useState(false)
+
+  const standardsUsed = useStandardsUsed(recordId ?? '')
 
   const result = useMemo(() => {
     if (!record) return 'INCOMPLETE' as const
@@ -243,8 +276,7 @@ export default function CalibrationDetail() {
         // Offline — outbox will sync when connectivity returns
       }
 
-      // Force re-render via page reload (query invalidation handled by hook)
-      window.location.reload()
+      queryClient.setQueryData(calibrationKeys.detail(record.id), updated)
     } catch (err) {
       setSubmitError(String(err))
     } finally {
@@ -461,6 +493,32 @@ export default function CalibrationDetail() {
         <h2 className="text-base font-semibold text-gray-800">Measurements</h2>
         <MeasurementsTable measurements={measurements} />
       </div>
+
+      {/* Standards used */}
+      {standardsUsed.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+          <h2 className="text-base font-semibold text-gray-800">Master Standards Used</h2>
+          <ul className="divide-y divide-gray-100">
+            {standardsUsed.map((s) => {
+              const due = new Date(s.due_at)
+              const overdue = due < new Date()
+              return (
+                <li key={s.id} className="py-2.5 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{s.name}</p>
+                    <p className="text-xs text-gray-500">
+                      S/N: {s.serial_number}{s.manufacturer ? ` · ${s.manufacturer}` : ''}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border ${overdue ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                    {overdue ? 'Overdue' : `Due ${due.toLocaleDateString()}`}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Continue editing */}
       {record.status === 'in_progress' && (
