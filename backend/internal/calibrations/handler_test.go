@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -179,5 +180,72 @@ func TestApprove_NotFound(t *testing.T) {
 	h.Approve(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Approve handler — role and body validation (no DB required)
+// ---------------------------------------------------------------------------
+
+func TestApprove_TechnicianForbidden(t *testing.T) {
+	h := &Handler{pool: nil}
+
+	r := httptest.NewRequest(http.MethodPost, "/calibrations/some-id/approve", nil)
+	ctx := middleware.WithRole(r.Context(), "technician")
+	ctx = middleware.WithTenantID(ctx, "tenant-1")
+	ctx = middleware.WithUserID(ctx, "user-1")
+	r = r.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	h.Approve(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "supervisors") {
+		t.Errorf("unexpected error message: %q", resp["error"])
+	}
+}
+
+func TestApprove_MalformedBody_Returns400(t *testing.T) {
+	h := &Handler{pool: nil}
+
+	r := httptest.NewRequest(http.MethodPost, "/calibrations/some-id/approve",
+		strings.NewReader(`{not valid json}`))
+	ctx := middleware.WithRole(r.Context(), "supervisor")
+	ctx = middleware.WithTenantID(ctx, "tenant-1")
+	ctx = middleware.WithUserID(ctx, "user-1")
+	r = r.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	h.Approve(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestApprove_EmptyBody_PassesRoleCheck(t *testing.T) {
+	// Empty body is valid for Approve (supervisor_signature is optional).
+	// Without a DB the handler panics after the role check, but we can verify
+	// the role check itself passes by confirming we do NOT get 403.
+	h := &Handler{pool: nil}
+
+	r := httptest.NewRequest(http.MethodPost, "/calibrations/some-id/approve",
+		strings.NewReader(""))
+	ctx := middleware.WithRole(r.Context(), "admin")
+	ctx = middleware.WithTenantID(ctx, "tenant-1")
+	ctx = middleware.WithUserID(ctx, "user-1")
+	r = r.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+
+	defer func() { recover() }() // pool is nil — expect panic after role check
+	h.Approve(w, r)
+
+	if w.Code == http.StatusForbidden {
+		t.Error("admin role should not get 403")
 	}
 }
