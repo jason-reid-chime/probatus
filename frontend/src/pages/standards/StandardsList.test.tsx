@@ -6,6 +6,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 const mockNavigate = vi.fn()
 
 vi.mock('../../hooks/useAuth', () => ({ useAuth: vi.fn() }))
+const mockChain = {
+  select: vi.fn(),
+  then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve),
+}
+mockChain.select.mockReturnValue(mockChain)
+
+vi.mock('../../lib/supabase', () => ({
+  supabase: { from: vi.fn(() => mockChain) },
+}))
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => mockNavigate,
