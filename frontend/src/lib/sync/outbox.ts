@@ -11,26 +11,35 @@ const MAX_RETRIES = 5
  * from a session-less client, burning through retries permanently.
  */
 export async function flushOutbox(): Promise<void> {
-  // Auth guard — do not flush if the session hasn't been restored yet.
-  // This prevents the startup race where flushOutbox fires before
-  // supabase.auth has rehydrated the session from storage.
   const { data: { session } } = await supabase.auth.getSession()
-  if (!session) return
+  if (!session) {
+    console.warn('[outbox] flushOutbox aborted — no active session')
+    return
+  }
 
   const entries = await db.outbox.orderBy('id').toArray()
-  if (entries.length === 0) return
+  if (entries.length === 0) {
+    console.debug('[outbox] nothing to flush')
+    return
+  }
+
+  console.log(`[outbox] flushing ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`)
 
   for (const entry of entries) {
-    if (entry.retries >= MAX_RETRIES) continue
+    if (entry.retries >= MAX_RETRIES) {
+      console.warn(`[outbox] skipping dead entry id=${entry.id} table=${entry.table} op=${entry.operation} retries=${entry.retries}`)
+      continue
+    }
 
     try {
+      console.log(`[outbox] processing id=${entry.id} table=${entry.table} op=${entry.operation}`)
       await processEntry(entry)
       await db.outbox.delete(entry.id!)
+      console.log(`[outbox] ✓ id=${entry.id} synced and removed`)
     } catch (err) {
-      // Don't increment retries for auth errors — they'll always fail until
-      // the user re-authenticates and are not a transient network problem.
       const msg = String(err)
       const isAuthError = msg.includes('JWT') || msg.includes('401') || msg.includes('403') || msg.includes('not authenticated')
+      console.error(`[outbox] ✗ id=${entry.id} table=${entry.table} failed: ${msg}`, { isAuthError })
       if (!isAuthError) {
         await db.outbox.update(entry.id!, {
           retries: entry.retries + 1,
@@ -39,6 +48,8 @@ export async function flushOutbox(): Promise<void> {
       }
     }
   }
+
+  console.log('[outbox] flush complete')
 }
 
 const CONFLICT_COLUMN: Record<string, string> = {
@@ -80,11 +91,12 @@ async function processEntry(entry: OutboxEntry): Promise<void> {
 export async function enqueue(
   entry: Omit<OutboxEntry, 'id' | 'retries' | 'created_at'>
 ): Promise<void> {
-  await db.outbox.add({
+  const id = await db.outbox.add({
     ...entry,
     created_at: new Date().toISOString(),
     retries: 0,
   })
+  console.debug(`[outbox] enqueued id=${id} table=${entry.table} op=${entry.operation}`)
 }
 
 /**
@@ -101,13 +113,14 @@ export async function enqueueStandardsReplace(recordId: string, standardIds: str
     await db.outbox.bulkDelete(existing.map((e) => e.id!))
   }
 
-  await db.outbox.add({
+  const id = await db.outbox.add({
     table: 'calibration_standards_used',
     operation: 'replace_standards',
     payload: { record_id: recordId, standard_ids: standardIds },
     created_at: new Date().toISOString(),
     retries: 0,
   })
+  console.debug(`[outbox] enqueued replace_standards id=${id} record=${recordId} standards=${standardIds.length}`)
 }
 
 /**

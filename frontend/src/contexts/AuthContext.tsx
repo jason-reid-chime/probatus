@@ -66,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           loadProfile(s.user.id)
           // Flush any outbox entries that accumulated before the session was ready
           if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+            console.log(`[auth] ${event} — triggering outbox flush`)
             flushOutbox().catch(console.error)
           }
         } else {
