@@ -10,6 +10,7 @@ import {
   LogOut,
   Wifi,
   WifiOff,
+  Building2,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', Icon: LayoutDashboard },
   { to: '/assets', label: 'Assets', Icon: Wrench },
   { to: '/calibrations', label: 'Calibrations', Icon: ClipboardList },
+  { to: '/customers', label: 'Customers', Icon: Building2 },
   {
     to: '/approvals',
     label: 'Approvals',

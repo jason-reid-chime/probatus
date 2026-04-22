@@ -21,6 +21,8 @@ import PortalDashboard from './pages/portal/PortalDashboard'
 import PortalAssetDetail from './pages/portal/PortalAssetDetail'
 import AuditPackage from './pages/AuditPackage'
 import ApprovalDashboard from './pages/approvals/ApprovalDashboard'
+import CustomersList from './pages/customers/CustomersList'
+import CustomerForm from './pages/customers/CustomerForm'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -62,6 +64,9 @@ export default function App() {
               <Route path="templates/:id/edit" element={<TemplateForm />} />
               <Route path="approvals" element={<ApprovalDashboard />} />
               <Route path="audit" element={<AuditPackage />} />
+              <Route path="customers" element={<CustomersList />} />
+              <Route path="customers/new" element={<CustomerForm />} />
+              <Route path="customers/:id/edit" element={<CustomerForm />} />
             </Route>
           </Routes>
           </BrowserRouter>

@@ -1055,31 +1055,48 @@ func buildCertHTML(p buildCertHTMLParams) string {
 <head>
 <meta charset="UTF-8"/>
 <style>
-  body { font-family: Arial, sans-serif; font-size: 11px; margin: 30px; color: #222; }
-  h1 { font-size: 18px; text-align: center; margin-bottom: 2px; }
-  h2 { font-size: 13px; text-align: center; margin-top: 0; color: #555; }
-  .company { text-align: center; font-weight: bold; font-size: 14px; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; font-size: 11px; margin: 0; color: #222; background: #fff; }
+  .header { background: #1e1e1e; color: #fff; padding: 20px 30px; display: flex; align-items: center; gap: 20px; }
+  .header img { height: 60px; }
+  .header-text { flex: 1; }
+  .header-company { font-size: 18px; font-weight: bold; color: #fff; margin: 0 0 2px; }
+  .header-tagline { font-size: 10px; color: #e8500a; margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .header-contact { font-size: 9px; color: #9ca3af; }
+  .cert-title { background: #e8500a; color: #fff; text-align: center; padding: 10px; font-size: 16px; font-weight: bold; letter-spacing: 1px; }
+  .content { padding: 20px 30px; }
   .section { margin-top: 16px; }
-  .section-title { font-weight: bold; border-bottom: 1px solid #aaa; margin-bottom: 6px; padding-bottom: 2px; }
+  .section-title { font-weight: bold; border-bottom: 2px solid #e8500a; margin-bottom: 8px; padding-bottom: 3px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #1e1e1e; }
   table { width: 100%%; border-collapse: collapse; margin-top: 4px; }
-  th { background: #2c3e50; color: #fff; padding: 5px 8px; text-align: left; font-size: 10px; }
-  td { padding: 4px 8px; border-bottom: 1px solid #ddd; font-size: 10px; }
-  tr:nth-child(even) { background: #f7f7f7; }
+  th { background: #1e1e1e; color: #fff; padding: 6px 8px; text-align: left; font-size: 10px; }
+  td { padding: 5px 8px; border-bottom: 1px solid #e5e5e5; font-size: 10px; }
+  tr:nth-child(even) td { background: #f9f9f9; }
   .pass  { color: #27ae60; font-weight: bold; }
   .fail  { color: #c0392b; font-weight: bold; }
-  .kv { display: flex; flex-wrap: wrap; gap: 4px 24px; }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px 24px; }
   .kv-item { min-width: 200px; }
-  .kv-label { font-weight: bold; }
-  .signatures { display: flex; gap: 60px; margin-top: 20px; }
-  .sig-block { flex: 1; border-top: 1px solid #333; padding-top: 4px; font-size: 10px; }
-  .footer { margin-top: 24px; font-size: 9px; color: #888; text-align: center; }
+  .kv-label { font-weight: bold; color: #555; }
+  .signatures { display: flex; gap: 40px; margin-top: 24px; }
+  .sig-block { flex: 1; border-top: 2px solid #1e1e1e; padding-top: 6px; font-size: 10px; }
+  .footer { margin-top: 24px; background: #f5f4f2; border-top: 3px solid #e8500a; padding: 10px 30px; font-size: 8.5px; color: #666; display: flex; justify-content: space-between; }
+  .footer-left { font-style: italic; }
+  .footer-right { text-align: right; }
 </style>
 </head>
 <body>
-<div class="company">%s</div>
-<h1>Calibration Certificate</h1>
-<h2>ISO/IEC 17025 Compliant Calibration Record</h2>
 
+<div class="header">
+  <img src="https://valatix.com/ultimate_logo_white_bg-removebg-preview.png" alt="Valatix Logo" style="background:#fff;padding:4px;border-radius:4px;"/>
+  <div class="header-text">
+    <p class="header-company">%s</p>
+    <p class="header-tagline">NIST Traceable &bull; Audit-Ready &bull; Specialized Industrial Support</p>
+    <p class="header-contact">341 Talbot Street, London, ON N6A 2R5 &nbsp;&bull;&nbsp; (416) 843-5312 &nbsp;&bull;&nbsp; info@valatix.com</p>
+  </div>
+</div>
+
+<div class="cert-title">CALIBRATION CERTIFICATE</div>
+
+<div class="content">
 <div class="section">
   <div class="section-title">Certificate Information</div>
   <div class="kv">`, p.tenantName)
@@ -1189,12 +1206,13 @@ func buildCertHTML(p buildCertHTMLParams) string {
 	sb.WriteString(`</div>`)
 
 	fmt.Fprintf(&sb, `
+</div><!-- /content -->
 <div class="footer">
-  %s &bull; Calibration Services &bull; This certificate shall not be reproduced
-  except in full without written approval of the issuing laboratory.
+  <span class="footer-left">This certificate shall not be reproduced except in full without written approval of %s.</span>
+  <span class="footer-right">Generated %s &bull; 447 Licensed Instrumentation &amp; Control</span>
 </div>
 </body>
-</html>`, p.tenantName)
+</html>`, p.tenantName, time.Now().UTC().Format("2006-01-02"))
 
 	return sb.String()
 }
