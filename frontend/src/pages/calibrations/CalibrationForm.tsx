@@ -363,25 +363,47 @@ export default function CalibrationForm() {
       }
 
       if (existingRecordId) {
-        // Load existing record header fields
+        // Load existing record header fields — Dexie first, fall back to Supabase
         const rec = await db.calibration_records.get(existingRecordId)
         if (rec) {
           setSalesNumber(rec.sales_number ?? '')
           setFlagNumber(rec.flag_number ?? '')
           setNotes(rec.notes ?? '')
         }
-        // Load existing measurements and restore rows
-        const measurements = await db.measurements
+
+        // Load existing measurements — fall back to Supabase if Dexie is empty.
+        // Critical: if Dexie is empty (different browser/cleared storage), we must
+        // seed stableMeasurementIds from remote IDs or a re-save will generate new
+        // UUIDs and insert duplicate rows instead of updating existing ones.
+        let measurements = await db.measurements
           .where('record_id').equals(existingRecordId).toArray()
+        if (measurements.length === 0) {
+          const { supabase } = await import('../../lib/supabase')
+          const { data } = await supabase
+            .from('calibration_measurements')
+            .select('*')
+            .eq('record_id', existingRecordId)
+          if (data && data.length > 0) {
+            measurements = data as typeof measurements
+            await db.measurements.bulkPut(measurements)
+          }
+        }
+
+        // Load existing standard IDs so re-save doesn't wipe them
+        const { supabase } = await import('../../lib/supabase')
+        const { data: stdLinks } = await supabase
+          .from('calibration_standards_used')
+          .select('standard_id')
+          .eq('record_id', existingRecordId)
+        if (stdLinks && stdLinks.length > 0) {
+          setSelectedStandardIds(stdLinks.map((l: { standard_id: string }) => l.standard_id))
+        }
+
         // Seed stable ID map so re-saves update existing rows rather than inserting new ones
         for (const m of measurements) {
           stableMeasurementIds.current.set(m.point_label, m.id)
         }
         if (measurements.length > 0 && a) {
-          // Seed stable ID map so re-saves reuse the same DB-assigned UUIDs
-          for (const m of measurements) {
-            stableMeasurementIds.current.set(m.point_label, m.id)
-          }
           const type = a.instrument_type?.toLowerCase() ?? ''
           if (type === 'pressure') {
             setPressureRows(measurements.map(m => ({
