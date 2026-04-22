@@ -334,8 +334,10 @@ export default function CalibrationForm() {
   const [localId] = useState(() => existingRecordId ?? crypto.randomUUID())
   const [recordId] = useState(() => existingRecordId ?? crypto.randomUUID())
 
-  // Stable measurement IDs keyed by point_label — prevents new UUIDs on every render
-  // which would cause upsert to insert duplicates instead of updating existing rows.
+  // Stable measurement IDs keyed by point_label. Seeded from DB on edit load,
+  // otherwise generated once on first access. Prevents duplicate rows when the
+  // form is saved multiple times (each helper function calls crypto.randomUUID()
+  // on every render, which would cause new DB rows on every save).
   const stableMeasurementIds = useRef<Map<string, string>>(new Map())
 
   // Load asset (and existing record if editing) from Dexie on mount
@@ -376,6 +378,10 @@ export default function CalibrationForm() {
           stableMeasurementIds.current.set(m.point_label, m.id)
         }
         if (measurements.length > 0 && a) {
+          // Seed stable ID map so re-saves reuse the same DB-assigned UUIDs
+          for (const m of measurements) {
+            stableMeasurementIds.current.set(m.point_label, m.id)
+          }
           const type = a.instrument_type?.toLowerCase() ?? ''
           if (type === 'pressure') {
             setPressureRows(measurements.map(m => ({
@@ -456,13 +462,15 @@ export default function CalibrationForm() {
     else if (type === 'level_4_20ma' || type === 'flow') raw = levelMeasurements(recordId, levelRows)
     else if (type === 'transmitter_4_20ma') raw = transmitterMeasurements(recordId, transmitterRows)
     else if (type === 'pressure_switch' || type === 'temperature_switch') raw = switchMeasurements(recordId, switchData, asset)
+    else raw = []
 
-    // Assign stable IDs by point_label so re-saves update rows instead of inserting duplicates
-    return raw.map((m) => {
-      if (!stableMeasurementIds.current.has(m.point_label)) {
-        stableMeasurementIds.current.set(m.point_label, crypto.randomUUID())
-      }
-      return { ...m, id: stableMeasurementIds.current.get(m.point_label)! }
+    // Assign stable IDs so that re-saves upsert the same rows rather than
+    // inserting duplicates. IDs are keyed by point_label and generated once
+    // per session (or seeded from the DB when editing an existing record).
+    const idMap = stableMeasurementIds.current
+    return raw.map(m => {
+      if (!idMap.has(m.point_label)) idMap.set(m.point_label, crypto.randomUUID())
+      return { ...m, id: idMap.get(m.point_label)! }
     })
   }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, recordId])
 
