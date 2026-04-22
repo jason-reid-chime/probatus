@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle, XCircle, LayoutTemplate, X } from 'lucide-react'
 import { db } from '../../lib/db'
@@ -8,6 +8,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useSaveCalibration } from '../../hooks/useCalibration'
 import { overallResult, calcErrorPct, isPass, calc4_20mAErrorPct } from '../../utils/calibrationMath'
 import TemplatePicker from '../../components/calibrations/TemplatePicker'
+import StandardPicker from '../../components/standards/StandardPicker'
 import type { CalibrationTemplate } from '../../types'
 
 import PressureTemplate, {
@@ -61,11 +62,15 @@ function Toast({ message, onDone }: { message: string; onDone: () => void }) {
 function pressureMeasurements(
   recordId: string,
   rows: PressureRow[],
+  asset: LocalAsset,
 ): LocalMeasurement[] {
+  const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
   return rows.map((row) => {
     const asLeftNum = parseFloat(row.asLeft)
     const hasLeft = row.asLeft !== '' && !isNaN(asLeftNum)
-    const errorPct = hasLeft ? calcErrorPct(row.standardValue, asLeftNum) : undefined
+    const errorPct = hasLeft && span !== 0
+      ? Math.abs(asLeftNum - row.standardValue) / span * 100
+      : undefined
     const pass = hasLeft && errorPct !== undefined && isFinite(errorPct)
       ? isPass(errorPct)
       : undefined
@@ -94,11 +99,9 @@ function temperatureMeasurements(
       row.measured !== '' &&
       !isNaN(refNum) &&
       !isNaN(measNum)
-    const errorPct = hasValue ? calcErrorPct(refNum, measNum) : undefined
-    const pass =
-      hasValue && errorPct !== undefined && isFinite(errorPct)
-        ? isPass(errorPct)
-        : undefined
+    const rawErr = hasValue ? calcErrorPct(refNum, measNum) : undefined
+    const errorPct = rawErr !== undefined && isFinite(rawErr) ? rawErr : undefined
+    const pass = errorPct !== undefined ? isPass(errorPct) : undefined
     return {
       id: crypto.randomUUID(),
       record_id: recordId,
@@ -321,6 +324,7 @@ export default function CalibrationForm() {
   const [conductivityData, setConductivityData] = useState<ConductivityData>(buildDefaultConductivityData())
   const [transmitterRows, setTransmitterRows] = useState<TransmitterRow[]>([])
 
+  const [selectedStandardIds, setSelectedStandardIds] = useState<string[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
@@ -369,6 +373,10 @@ export default function CalibrationForm() {
         // Load existing measurements and restore rows
         const measurements = await db.measurements
           .where('record_id').equals(existingRecordId).toArray()
+        // Seed stable ID map so re-saves update existing rows rather than inserting new ones
+        for (const m of measurements) {
+          stableMeasurementIds.current.set(m.point_label, m.id)
+        }
         if (measurements.length > 0 && a) {
           // Seed stable ID map so re-saves reuse the same DB-assigned UUIDs
           for (const m of measurements) {
@@ -446,9 +454,8 @@ export default function CalibrationForm() {
   const liveMeasurements: LocalMeasurement[] = useMemo(() => {
     if (!asset) return []
     const type = asset.instrument_type ?? ''
-
-    let raw: LocalMeasurement[]
-    if (type === 'pressure') raw = pressureMeasurements(recordId, pressureRows)
+    let raw: LocalMeasurement[] = []
+    if (type === 'pressure') raw = pressureMeasurements(recordId, pressureRows, asset)
     else if (type === 'temperature') raw = temperatureMeasurements(recordId, temperatureRows)
     else if (type === 'ph_conductivity') raw = phMeasurements(recordId, phData)
     else if (type === 'conductivity') raw = conductivityMeasurements(recordId, conductivityData)
@@ -561,6 +568,7 @@ export default function CalibrationForm() {
       await saveCalibration.mutateAsync({
         record,
         measurements: liveMeasurements,
+        standardIds: selectedStandardIds,
       })
 
       setToast(isOnline() ? 'Saved' : 'Saved offline — will sync when online')
@@ -621,13 +629,16 @@ export default function CalibrationForm() {
         </p>
       </div>
 
-      {/* No master standard warning */}
-      <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-300 rounded-xl text-sm text-amber-800">
-        <AlertTriangle size={18} className="mt-0.5 shrink-0" />
-        <span>
-          No master standard selected. You can still record data — standard
-          traceability can be linked later.
-        </span>
+      {/* Master standards */}
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+        <h2 className="text-base font-semibold text-gray-800">Master Standards Used</h2>
+        {selectedStandardIds.length === 0 && (
+          <div className="flex items-start gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+            <span>No standard selected — traceability will not be recorded.</span>
+          </div>
+        )}
+        <StandardPicker selected={selectedStandardIds} onChange={setSelectedStandardIds} />
       </div>
 
       {/* Template picker button */}

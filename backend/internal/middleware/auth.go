@@ -151,12 +151,12 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Look up the profile to get tenant_id.
-			var tenantID string
+			// Look up the profile to get tenant_id and role.
+			var tenantID, role string
 			err = pool.QueryRow(r.Context(),
-				`SELECT tenant_id::text FROM profiles WHERE id = $1`,
+				`SELECT tenant_id::text, role::text FROM profiles WHERE id = $1`,
 				sub,
-			).Scan(&tenantID)
+			).Scan(&tenantID, &role)
 			if err != nil {
 				slog.Error("profile lookup failed", "sub", sub, "error", err)
 				writeAuthError(w, "user profile not found")
@@ -165,6 +165,7 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			ctx := context.WithValue(r.Context(), ctxKeyUserID, sub)
 			ctx = context.WithValue(ctx, ctxKeyTenantID, tenantID)
+			ctx = context.WithValue(ctx, ctxKeyRole, role)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -187,4 +188,19 @@ func TenantIDFromCtx(ctx context.Context) string {
 func RoleFromCtx(ctx context.Context) string {
 	v, _ := ctx.Value(ctxKeyRole).(string)
 	return v
+}
+
+// WithTenantID returns a context with the given tenant ID set. Used in tests.
+func WithTenantID(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, ctxKeyTenantID, tenantID)
+}
+
+// WithUserID returns a context with the given user ID set. Used in tests.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, ctxKeyUserID, userID)
+}
+
+// WithRole injects a role into the context. Useful in tests.
+func WithRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, ctxKeyRole, role)
 }

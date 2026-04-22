@@ -47,6 +47,26 @@ export async function upsertCalibrationRecord(
 }
 
 // ---------------------------------------------------------------------------
+// upsertCalibrationStandards
+// ---------------------------------------------------------------------------
+export async function upsertCalibrationStandards(
+  recordId: string,
+  standardIds: string[],
+): Promise<void> {
+  // Remove previous links then insert the current selection
+  await supabase
+    .from('calibration_standards_used')
+    .delete()
+    .eq('record_id', recordId)
+
+  if (standardIds.length === 0) return
+
+  const rows = standardIds.map((standard_id) => ({ record_id: recordId, standard_id }))
+  const { error } = await supabase.from('calibration_standards_used').insert(rows)
+  if (error) throw error
+}
+
+// ---------------------------------------------------------------------------
 // upsertMeasurements
 // ---------------------------------------------------------------------------
 export async function upsertMeasurements(

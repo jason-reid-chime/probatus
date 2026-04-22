@@ -1,19 +1,28 @@
 package templates
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
+// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 // Handler holds the DB pool for the templates resource.
 type Handler struct {
-	pool *pgxpool.Pool
+	pool querier
 }
 
 // NewHandler creates a new templates Handler.

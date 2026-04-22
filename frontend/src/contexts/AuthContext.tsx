@@ -8,6 +8,7 @@ import {
 import type { ReactNode } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
+import { flushOutbox } from '../lib/sync/outbox'
 import type { Profile } from '../types'
 
 interface AuthContextValue {
@@ -58,11 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, s) => {
+      (event, s) => {
         setSession(s)
         setUser(s?.user ?? null)
         if (s?.user) {
           loadProfile(s.user.id)
+          // Flush any outbox entries that accumulated before the session was ready
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+            flushOutbox().catch(console.error)
+          }
         } else {
           setProfile(null)
         }

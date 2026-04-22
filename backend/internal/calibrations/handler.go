@@ -16,15 +16,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jasonreid/probatus/internal/email"
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
+// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // Handler holds the DB pool for the calibrations resource.
 type Handler struct {
-	pool *pgxpool.Pool
+	pool querier
 }
 
 // NewHandler creates a new calibrations Handler.
@@ -90,6 +99,7 @@ func (h *Handler) checkStandardsDueDate(r *http.Request, tenantID string, standa
 		standardIDs, tenantID,
 	)
 	if err != nil {
+		slog.Error("checkStandardsDueDate: query failed", "tenant_id", tenantID, "error", err)
 		return "failed to validate standards"
 	}
 	defer rows.Close()
@@ -98,6 +108,7 @@ func (h *Handler) checkStandardsDueDate(r *http.Request, tenantID string, standa
 		var name string
 		var dueAt time.Time
 		if err := rows.Scan(&name, &dueAt); err != nil {
+			slog.Error("checkStandardsDueDate: scan failed", "tenant_id", tenantID, "error", err)
 			return "failed to validate standards"
 		}
 		if dueAt.Before(today) {
@@ -133,6 +144,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(r.Context(), query, args...)
 	if err != nil {
+		slog.Error("calibrations.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query calibrations")
 		return
 	}
@@ -148,12 +160,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			&rec.CertificateURL, &rec.Notes, &rec.LocalID,
 		)
 		if err != nil {
+			slog.Error("calibrations.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan calibration")
 			return
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
+		slog.Error("calibrations.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating calibrations")
 		return
 	}
@@ -188,6 +202,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("calibrations.Get: query failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query calibration")
 		return
 	}
@@ -202,6 +217,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
+		slog.Error("calibrations.Get: measurements query failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query measurements")
 		return
 	}
@@ -212,12 +228,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		var m Measurement
 		if err := mRows.Scan(&m.ID, &m.RecordID, &m.PointLabel, &m.StandardValue,
 			&m.MeasuredValue, &m.Unit, &m.Pass, &m.ErrorPct, &m.Notes); err != nil {
+			slog.Error("calibrations.Get: measurement scan failed", "record_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan measurement")
 			return
 		}
 		rec.Measurements = append(rec.Measurements, m)
 	}
 	if err := mRows.Err(); err != nil {
+		slog.Error("calibrations.Get: measurement iteration error", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating measurements")
 		return
 	}
@@ -274,6 +292,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {
+		slog.Error("calibrations.Create: begin transaction failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
@@ -290,6 +309,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
 	).Scan(&recID)
 	if err != nil {
+		slog.Error("calibrations.Create: insert failed", "tenant_id", tenantID, "asset_id", body.AssetID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create calibration record")
 		return
 	}
@@ -303,6 +323,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			recID, m.PointLabel, m.StandardValue, m.MeasuredValue, m.Unit, m.Pass, m.ErrorPct, m.Notes,
 		)
 		if err != nil {
+			slog.Error("calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to insert measurement")
 			return
 		}
@@ -315,15 +336,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			recID, stdID,
 		)
 		if err != nil {
+			slog.Error("calibrations.Create: standard link failed", "record_id", recID, "standard_id", stdID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to link standard")
 			return
 		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("calibrations.Create: commit failed", "record_id", recID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
+
+	slog.Info("calibrations.Create: record created", "record_id", recID, "tenant_id", tenantID, "asset_id", body.AssetID)
 
 	// Return the created record.
 	w.Header().Set("Content-Type", "application/json")
@@ -369,6 +394,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		body.SalesNumber, body.FlagNumber, body.Notes, body.LocalID,
 	)
 	if err != nil {
+		slog.Error("calibrations.Update: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update calibration")
 		return
 	}
@@ -384,7 +410,13 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	userID := middleware.UserIDFromCtx(r.Context())
+	role := middleware.RoleFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
+
+	if role != "supervisor" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only supervisors and admins can approve calibrations")
+		return
+	}
 
 	var body struct {
 		SupervisorSignature string `json:"supervisor_signature"`
@@ -403,17 +435,20 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		     supervisor_id = $3,
 		     approved_at = $4,
 		     supervisor_signature = COALESCE(NULLIF($5,''), supervisor_signature)
-		 WHERE id = $1 AND tenant_id = $2`,
+		 WHERE id = $1 AND tenant_id = $2 AND status = 'pending_approval'`,
 		id, tenantID, userID, now, body.SupervisorSignature,
 	)
 	if err != nil {
+		slog.Error("calibrations.Approve: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to approve calibration")
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "calibration not found")
+		writeError(w, http.StatusNotFound, "calibration not found or not pending approval")
 		return
 	}
+
+	slog.Info("calibrations.Approve: record approved", "record_id", id, "tenant_id", tenantID, "supervisor_id", userID)
 
 	// Fire off the certificate email in the background so the HTTP response is
 	// never delayed or failed due to email delivery issues.
@@ -422,7 +457,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})
 }
 
-func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, tenantID string) {
+func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID string) {
 	// Use a detached context so the goroutine is not cancelled when the HTTP
 	// handler's context is done.
 	ctx = context.Background()
@@ -443,9 +478,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 		notes          string
 	}
 	err := pool.QueryRow(ctx,
-		`SELECT local_id, performed_at, technician_id::text,
+		`SELECT COALESCE(local_id,''), performed_at, technician_id::text,
 		        COALESCE(supervisor_id::text,''), asset_id::text,
-		        tech_signature, supervisor_signature, sales_number, flag_number, notes
+		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
+		        COALESCE(sales_number,''), COALESCE(flag_number,''), COALESCE(notes,'')
 		 FROM calibration_records
 		 WHERE id = $1 AND tenant_id = $2`,
 		recordID, tenantID,
@@ -476,8 +512,8 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	var tenantName string
 
 	err = pool.QueryRow(ctx,
-		`SELECT a.tag_id, a.serial_number, a.manufacturer, a.model,
-		        a.instrument_type, a.location, a.range_min, a.range_max, a.range_unit,
+		`SELECT a.tag_id, COALESCE(a.serial_number,''), COALESCE(a.manufacturer,''), COALESCE(a.model,''),
+		        a.instrument_type, COALESCE(a.location,''), a.range_min, a.range_max, COALESCE(a.range_unit,''),
 		        COALESCE(c.name,''), COALESCE(c.contact,'')
 		 FROM assets a
 		 LEFT JOIN customers c ON c.id = a.customer_id AND c.tenant_id = a.tenant_id
@@ -531,7 +567,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	// 5. Load measurements.
 	// -------------------------------------------------------------------------
 	mRows, err := pool.Query(ctx,
-		`SELECT point_label, standard_value, measured_value, unit, error_pct, pass, notes
+		`SELECT point_label,
+		        COALESCE(standard_value, 0), COALESCE(measured_value, 0),
+		        COALESCE(unit,''), COALESCE(error_pct, 0),
+		        COALESCE(pass, false), COALESCE(notes,'')
 		 FROM calibration_measurements WHERE record_id = $1 ORDER BY id`,
 		recordID,
 	)
@@ -565,7 +604,8 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	// 6. Load standards used.
 	// -------------------------------------------------------------------------
 	sRows, err := pool.Query(ctx,
-		`SELECT ms.name, ms.serial_number, ms.model, ms.manufacturer, ms.certificate_ref, ms.due_at
+		`SELECT ms.name, ms.serial_number, COALESCE(ms.model,''), COALESCE(ms.manufacturer,''),
+		        COALESCE(ms.certificate_ref,''), ms.due_at
 		 FROM calibration_standards_used csu
 		 JOIN master_standards ms ON ms.id = csu.standard_id
 		 WHERE csu.record_id = $1`,
@@ -589,10 +629,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 	sRows.Close()
 
 	// -------------------------------------------------------------------------
-	// 7. Render the certificate HTML and call Gotenberg for a PDF.
+	// 7. Render the certificate and generate a PDF.
 	// -------------------------------------------------------------------------
 	approvedNow := time.Now().UTC()
-	htmlBody := buildCertHTML(buildCertHTMLParams{
+	certParams := buildCertHTMLParams{
 		recordID:       recordID,
 		localID:        rec.localID,
 		tenantName:     tenantName,
@@ -617,9 +657,10 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 		rangeUnit:      asset.rangeUnit,
 		measurements:   measurements,
 		standards:      standards,
-	})
+	}
+	htmlBody := buildCertHTML(certParams)
 
-	pdfBytes, err := generatePDFViaGotenberg(ctx, htmlBody)
+	pdfBytes, err := generatePDF(ctx, htmlBody, certParams)
 	if err != nil {
 		slog.Error("sendCertificateEmail: failed to generate PDF", "record_id", recordID, "error", err)
 		return
@@ -647,8 +688,12 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 
 	pdfFilename := fmt.Sprintf("certificate-%s.pdf", rec.localID)
 
+	fromEmail := os.Getenv("RESEND_FROM_EMAIL")
+	if fromEmail == "" {
+		fromEmail = "onboarding@resend.dev"
+	}
 	payload := email.EmailPayload{
-		From:    "certificates@probatus.app",
+		From:    fromEmail,
 		To:      []string{customerContact},
 		Subject: fmt.Sprintf("Calibration Certificate — %s (%s)", asset.tagID, rec.performedAt.Format("2006-01-02")),
 		Html:    htmlEmail,
@@ -670,12 +715,26 @@ func sendCertificateEmail(pool *pgxpool.Pool, ctx context.Context, recordID, ten
 		"record_id", recordID, "customer_email", customerContact, "asset_tag", asset.tagID)
 }
 
-// generatePDFViaGotenberg posts the rendered HTML to Gotenberg and returns the PDF bytes.
-func generatePDFViaGotenberg(ctx context.Context, htmlContent string) ([]byte, error) {
+// generatePDF attempts to render a PDF via Gotenberg if GOTENBERG_URL is set
+// and reachable. If Gotenberg is unavailable the function falls back to a
+// pure-Go minimal PDF so that certificate emails are never blocked by the
+// absence of the Gotenberg sidecar (e.g. on Railway where only the API
+// container runs).
+func generatePDF(ctx context.Context, htmlContent string, p buildCertHTMLParams) ([]byte, error) {
 	gotenbergURL := os.Getenv("GOTENBERG_URL")
-	if gotenbergURL == "" {
-		gotenbergURL = "http://localhost:3000"
+	if gotenbergURL != "" {
+		pdfBytes, err := callGotenberg(ctx, gotenbergURL, htmlContent)
+		if err == nil {
+			return pdfBytes, nil
+		}
+		slog.Warn("generatePDF: Gotenberg unavailable, falling back to built-in PDF",
+			"gotenberg_url", gotenbergURL, "error", err)
 	}
+	return buildMinimalPDF(p), nil
+}
+
+// callGotenberg posts the rendered HTML to Gotenberg and returns the PDF bytes.
+func callGotenberg(ctx context.Context, gotenbergURL, htmlContent string) ([]byte, error) {
 	endpoint := gotenbergURL + "/forms/chromium/convert/html"
 
 	var buf bytes.Buffer
@@ -712,6 +771,195 @@ func generatePDFViaGotenberg(ctx context.Context, htmlContent string) ([]byte, e
 		return nil, fmt.Errorf("gotenberg: failed to read response body: %w", err)
 	}
 	return pdfBuf.Bytes(), nil
+}
+
+// buildMinimalPDF produces a valid, human-readable PDF-1.4 document from the
+// certificate parameters without any external dependencies. The output is a
+// single-page A4 document with a monospaced text layout. It is intentionally
+// simple — the Gotenberg path produces a nicer result, but this ensures email
+// delivery always succeeds even when Gotenberg is not deployed.
+func buildMinimalPDF(p buildCertHTMLParams) []byte {
+	lines := buildCertTextLines(p)
+
+	// Encode each line as a PDF string literal, escaping special chars.
+	escapePDF := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `(`, `\(`)
+		s = strings.ReplaceAll(s, `)`, `\)`)
+		return s
+	}
+
+	// Build the content stream: position text at top-left with 12pt Courier.
+	const (
+		fontSize  = 10.0
+		leading   = 14.0
+		marginL   = 50.0
+		pageH     = 841.89 // A4 height in points
+		startY    = 800.0
+	)
+
+	var cs strings.Builder
+	cs.WriteString("BT\n")
+	cs.WriteString("/F1 10 Tf\n")
+	y := startY
+	for _, line := range lines {
+		fmt.Fprintf(&cs, "%.2f %.2f Td\n", marginL, y)
+		fmt.Fprintf(&cs, "(%s) Tj\n", escapePDF(line))
+		y -= leading
+		// Reset X each line by going back to marginL from current position.
+		// Use absolute positioning instead: move to fixed X each line.
+		if y < 50 {
+			break // stop before running off the bottom
+		}
+		// Reset Td to absolute by undoing the cumulative offset each iteration.
+		// Simpler: use Tm (text matrix) for each line.
+		_ = pageH
+	}
+	cs.WriteString("ET\n")
+
+	// Re-render using Tm for reliable absolute positioning.
+	var cs2 strings.Builder
+	cs2.WriteString("BT\n")
+	cs2.WriteString("/F1 10 Tf\n")
+	y = startY
+	for _, line := range lines {
+		fmt.Fprintf(&cs2, "1 0 0 1 %.2f %.2f Tm\n", marginL, y)
+		fmt.Fprintf(&cs2, "(%s) Tj\n", escapePDF(line))
+		y -= leading
+		if y < 50 {
+			break
+		}
+	}
+	cs2.WriteString("ET\n")
+
+	stream := cs2.String()
+	streamLen := len(stream)
+
+	// Build PDF objects.
+	// Object layout:
+	//   1: Catalog
+	//   2: Pages
+	//   3: Page
+	//   4: Font (Courier)
+	//   5: Content stream
+
+	var pdf bytes.Buffer
+	pdf.WriteString("%PDF-1.4\n")
+
+	offsets := make([]int, 6) // 1-indexed, index 0 unused
+
+	offsets[1] = pdf.Len()
+	pdf.WriteString("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+
+	offsets[2] = pdf.Len()
+	pdf.WriteString("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+
+	offsets[3] = pdf.Len()
+	pdf.WriteString("3 0 obj\n<< /Type /Page /Parent 2 0 R\n")
+	pdf.WriteString("   /MediaBox [0 0 595.28 841.89]\n")
+	pdf.WriteString("   /Contents 5 0 R\n")
+	pdf.WriteString("   /Resources << /Font << /F1 4 0 R >> >>\n")
+	pdf.WriteString(">>\nendobj\n")
+
+	offsets[4] = pdf.Len()
+	pdf.WriteString("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n")
+
+	offsets[5] = pdf.Len()
+	fmt.Fprintf(&pdf, "5 0 obj\n<< /Length %d >>\nstream\n", streamLen)
+	pdf.WriteString(stream)
+	pdf.WriteString("\nendstream\nendobj\n")
+
+	xrefOffset := pdf.Len()
+	fmt.Fprintf(&pdf, "xref\n0 6\n0000000000 65535 f \n")
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&pdf, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&pdf, "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", xrefOffset)
+
+	return pdf.Bytes()
+}
+
+// buildCertTextLines converts certificate parameters into plain text lines
+// suitable for embedding in a PDF content stream.
+func buildCertTextLines(p buildCertHTMLParams) []string {
+	var lines []string
+	add := func(s string) { lines = append(lines, s) }
+	sep := func() { add(strings.Repeat("-", 80)) }
+
+	add(p.tenantName)
+	add("CALIBRATION CERTIFICATE")
+	add("ISO/IEC 17025 Compliant Calibration Record")
+	sep()
+
+	add("CERTIFICATE INFORMATION")
+	add(fmt.Sprintf("  Certificate No : %s", p.localID))
+	add(fmt.Sprintf("  Sales Order    : %s", p.salesNumber))
+	add(fmt.Sprintf("  Flag Number    : %s", p.flagNumber))
+	add(fmt.Sprintf("  Date Performed : %s", p.performedAt.Format("2006-01-02")))
+	if p.approvedAt != nil {
+		add(fmt.Sprintf("  Date Approved  : %s", p.approvedAt.Format("2006-01-02")))
+	}
+	add(fmt.Sprintf("  Status         : %s", strings.ToUpper(p.status)))
+	add(fmt.Sprintf("  Generated      : %s", time.Now().UTC().Format("2006-01-02 15:04 UTC")))
+	sep()
+
+	add("INSTRUMENT UNDER TEST")
+	add(fmt.Sprintf("  Tag ID          : %s", p.assetTag))
+	add(fmt.Sprintf("  Serial Number   : %s", p.serialNumber))
+	add(fmt.Sprintf("  Manufacturer    : %s", p.manufacturer))
+	add(fmt.Sprintf("  Model           : %s", p.model))
+	add(fmt.Sprintf("  Instrument Type : %s", p.instrumentType))
+	add(fmt.Sprintf("  Location        : %s", p.location))
+	if p.rangeMin != nil && p.rangeMax != nil {
+		add(fmt.Sprintf("  Range           : %.4g - %.4g %s", *p.rangeMin, *p.rangeMax, p.rangeUnit))
+	}
+	sep()
+
+	add("CALIBRATION MEASUREMENTS")
+	add(fmt.Sprintf("  %-20s %12s %12s %6s %8s %6s  Notes", "Point", "Standard", "Measured", "Unit", "Error%", "Result"))
+	for _, m := range p.measurements {
+		result := "PASS"
+		if !m.Pass {
+			result = "FAIL"
+		}
+		add(fmt.Sprintf("  %-20s %12.6g %12.6g %6s %8.4f %6s  %s",
+			m.PointLabel, m.StandardValue, m.MeasuredValue, m.Unit, m.ErrorPct, result, m.Notes))
+	}
+	sep()
+
+	if len(p.standards) > 0 {
+		add("REFERENCE STANDARDS USED")
+		add(fmt.Sprintf("  %-20s %-15s %-15s %-15s %-15s %s",
+			"Name", "Serial", "Model", "Manufacturer", "Cert Ref", "Due At"))
+		for _, s := range p.standards {
+			dueAt := ""
+			if s.DueAt != nil {
+				dueAt = s.DueAt.Format("2006-01-02")
+			}
+			add(fmt.Sprintf("  %-20s %-15s %-15s %-15s %-15s %s",
+				s.Name, s.SerialNumber, s.Model, s.Manufacturer, s.CertificateRef, dueAt))
+		}
+		sep()
+	}
+
+	if p.notes != "" {
+		add("NOTES")
+		add(fmt.Sprintf("  %s", p.notes))
+		sep()
+	}
+
+	add("SIGNATURES")
+	add(fmt.Sprintf("  Technician : %s", p.techName))
+	if p.supervisorName != "" {
+		add(fmt.Sprintf("  Supervisor : %s", p.supervisorName))
+	}
+	sep()
+
+	add(fmt.Sprintf("%s - Calibration Services", p.tenantName))
+	add("This certificate shall not be reproduced except in full without written")
+	add("approval of the issuing laboratory.")
+
+	return lines
 }
 
 // certMeasRow holds a single calibration measurement for certificate rendering.

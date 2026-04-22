@@ -7,7 +7,7 @@ const DEFAULT_TOLERANCE = 1.0
  * Returns NaN when standard is 0 to avoid division by zero.
  */
 export function calcErrorPct(standard: number, measured: number): number {
-  if (standard === 0) return NaN
+  if (standard === 0) return measured === 0 ? 0 : NaN
   return ((measured - standard) / standard) * 100
 }
 
