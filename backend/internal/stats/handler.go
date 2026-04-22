@@ -3,6 +3,7 @@ package stats
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -64,6 +65,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		tenantID, today,
 	).Scan(&resp.OverdueCount)
 	if err != nil {
+		slog.Error("stats.Dashboard: overdue count query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query overdue count")
 		return
 	}
@@ -75,6 +77,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		tenantID, today, in30,
 	).Scan(&resp.DueWithin30)
 	if err != nil {
+		slog.Error("stats.Dashboard: due_within_30 query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query due_within_30")
 		return
 	}
@@ -86,6 +89,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		tenantID, today, in90,
 	).Scan(&resp.DueWithin90)
 	if err != nil {
+		slog.Error("stats.Dashboard: due_within_90 query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query due_within_90")
 		return
 	}
@@ -97,6 +101,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		tenantID, in30,
 	).Scan(&resp.StandardsExpiringSoon)
 	if err != nil {
+		slog.Error("stats.Dashboard: standards expiring query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query standards_expiring_soon")
 		return
 	}
@@ -113,6 +118,7 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		tenantID, thirtyDaysAgo,
 	).Scan(&totalMeasurements, &passMeasurements)
 	if err != nil {
+		slog.Error("stats.Dashboard: pass rate query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query pass rate")
 		return
 	}

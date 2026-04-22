@@ -3,6 +3,7 @@ package standards
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -83,6 +84,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	)
 	if err != nil {
+		slog.Error("standards.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query standards")
 		return
 	}
@@ -92,12 +94,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		s, err := scanStandard(rows)
 		if err != nil {
+			slog.Error("standards.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan standard")
 			return
 		}
 		standards = append(standards, s)
 	}
 	if err := rows.Err(); err != nil {
+		slog.Error("standards.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating standards")
 		return
 	}
@@ -123,6 +127,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("standards.Get: query failed", "standard_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query standard")
 		return
 	}
@@ -178,6 +183,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	s, err := scanStandard(row)
 	if err != nil {
+		slog.Error("standards.Create: insert failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create standard")
 		return
 	}
@@ -195,6 +201,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
+		slog.Error("standards.Delete: exec failed", "standard_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete standard")
 		return
 	}
@@ -259,6 +266,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("standards.Update: update failed", "standard_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update standard")
 		return
 	}

@@ -82,7 +82,7 @@ export default function TemperatureTemplate({
                 !isNaN(refNum) &&
                 !isNaN(measNum)
               const errorPct = hasValue ? calcErrorPct(refNum, measNum) : NaN
-              const pass = hasValue ? isPass(errorPct) : null
+              const pass = hasValue && isFinite(errorPct) ? isPass(errorPct) : null
 
               return (
                 <tr key={row.id} className="border-t border-gray-200">

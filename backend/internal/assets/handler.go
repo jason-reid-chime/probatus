@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -103,6 +104,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	)
 	if err != nil {
+		slog.Error("assets.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query assets")
 		return
 	}
@@ -112,12 +114,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		a, err := scanAsset(rows)
 		if err != nil {
+			slog.Error("assets.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan asset")
 			return
 		}
 		assets = append(assets, a)
 	}
 	if err := rows.Err(); err != nil {
+		slog.Error("assets.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating assets")
 		return
 	}
@@ -143,6 +147,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("assets.Get: query failed", "asset_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query asset")
 		return
 	}
@@ -191,6 +196,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("assets.Create: insert failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create asset")
 		return
 	}
@@ -245,6 +251,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("assets.Update: update failed", "asset_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update asset")
 		return
 	}
@@ -262,6 +269,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
+		slog.Error("assets.Delete: exec failed", "asset_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete asset")
 		return
 	}
@@ -291,6 +299,7 @@ func (h *Handler) GetByTagID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		slog.Error("assets.GetByTagID: query failed", "tag_id", tagID, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query asset")
 		return
 	}

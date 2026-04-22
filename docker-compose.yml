@@ -13,7 +13,11 @@ services:
       - PORT=8080
       - DATABASE_URL=${DATABASE_URL}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - SUPABASE_URL=${SUPABASE_URL}
       - GOTENBERG_URL=http://gotenberg:3000
+      - RESEND_API_KEY=${RESEND_API_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - SENTRY_DSN=${SENTRY_DSN}
     depends_on:
       - gotenberg
     restart: unless-stopped

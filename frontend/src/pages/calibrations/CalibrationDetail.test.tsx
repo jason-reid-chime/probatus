@@ -17,7 +17,14 @@ vi.mock('../../lib/db', () => ({
 }))
 vi.mock('../../lib/sync/outbox', () => ({ enqueue: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('../../lib/supabase', () => ({
-  supabase: { auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) } },
+  supabase: {
+    auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
+    from: vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [] }).then(resolve),
+    }),
+  },
 }))
 vi.mock('../../lib/api/client', () => ({ API_URL: 'http://localhost:8080' }))
 

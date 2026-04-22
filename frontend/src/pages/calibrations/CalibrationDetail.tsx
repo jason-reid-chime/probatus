@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Upload, Send } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
 import { API_URL } from '../../lib/api/client'
@@ -151,19 +151,50 @@ function MeasurementsTable({
 function useSyncStatus(recordId: string) {
   const [pendingCount, setPendingCount] = useState<number | null>(null)
 
-  useMemo(() => {
+  useEffect(() => {
     db.outbox
       .filter((e) => {
         const payload = e.payload as Record<string, unknown>
-        return (
-          e.table === 'calibration_records' && payload['id'] === recordId
-        )
+        return e.table === 'calibration_records' && payload['id'] === recordId
       })
       .count()
       .then(setPendingCount)
   }, [recordId])
 
   return pendingCount
+}
+
+// ---------------------------------------------------------------------------
+// Standards used for this calibration record
+// ---------------------------------------------------------------------------
+interface StandardSummary {
+  id: string
+  name: string
+  serial_number: string
+  manufacturer: string | null
+  due_at: string
+}
+
+function useStandardsUsed(recordId: string) {
+  const [standards, setStandards] = useState<StandardSummary[]>([])
+
+  useEffect(() => {
+    if (!recordId) return
+    supabase
+      .from('calibration_standards_used')
+      .select('standard_id, master_standards(id, name, serial_number, manufacturer, due_at)')
+      .eq('record_id', recordId)
+      .then(({ data }) => {
+        if (!data) return
+        setStandards(
+          data
+            .map((row) => row.master_standards as unknown as StandardSummary)
+            .filter(Boolean)
+        )
+      })
+  }, [recordId])
+
+  return standards
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +224,15 @@ export default function CalibrationDetail() {
   const [approveError, setApproveError] = useState<string | null>(null)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [pdfError, setPdfError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [emailRecipient, setEmailRecipient] = useState('')
+  const [sendingEmail, setSendingEmail] = useState(false)
+  const [emailError, setEmailError] = useState<string | null>(null)
+  const [emailSent, setEmailSent] = useState(false)
+
+  const standardsUsed = useStandardsUsed(recordId ?? '')
 
   const result = useMemo(() => {
     if (!record) return 'INCOMPLETE' as const
@@ -236,8 +276,7 @@ export default function CalibrationDetail() {
         // Offline — outbox will sync when connectivity returns
       }
 
-      // Force re-render via page reload (query invalidation handled by hook)
-      window.location.reload()
+      queryClient.setQueryData(calibrationKeys.detail(record.id), updated)
     } catch (err) {
       setSubmitError(String(err))
     } finally {
@@ -319,6 +358,71 @@ export default function CalibrationDetail() {
     }
   }
 
+  async function handleSendEmail() {
+    if (!recordId || !emailRecipient) return
+    setSendingEmail(true)
+    setEmailError(null)
+    setEmailSent(false)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+      const res = await fetch(`${API_URL}/calibrations/${recordId}/send-email`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailRecipient }),
+      })
+      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      setEmailSent(true)
+      setEmailRecipient('')
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : 'Failed to send email')
+    } finally {
+      setSendingEmail(false)
+    }
+  }
+
+  async function handleCertificateUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file || !record || !profile) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const path = `${record.tenant_id}/${record.id}.pdf`
+      const { error: uploadErr } = await supabase.storage
+        .from('certificates')
+        .upload(path, file, { upsert: true, contentType: 'application/pdf' })
+      if (uploadErr) throw uploadErr
+
+      const { data: urlData } = supabase.storage
+        .from('certificates')
+        .getPublicUrl(path)
+      const publicUrl = urlData.publicUrl
+
+      const updated: LocalCalibrationRecord = {
+        ...record,
+        certificate_url: publicUrl,
+        updated_at: new Date().toISOString(),
+      }
+
+      await db.calibration_records.put(updated)
+
+      await supabase
+        .from('calibration_records')
+        .update({ certificate_url: publicUrl, updated_at: updated.updated_at })
+        .eq('id', record.id)
+
+      queryClient.setQueryData(
+        calibrationKeys.detail(record.id),
+        updated,
+      )
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
       {/* Header row */}
@@ -328,6 +432,14 @@ export default function CalibrationDetail() {
             Calibration Record
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">{performedAt}</p>
+          <button
+            type="button"
+            onClick={() => navigate(`/assets/${record.asset_id}`)}
+            className="mt-1 inline-flex items-center gap-1 text-sm text-brand-600 hover:text-brand-700 hover:underline"
+          >
+            <ExternalLink size={13} />
+            View Asset
+          </button>
         </div>
         <StatusBadge status={record.status} />
       </div>
@@ -381,6 +493,32 @@ export default function CalibrationDetail() {
         <h2 className="text-base font-semibold text-gray-800">Measurements</h2>
         <MeasurementsTable measurements={measurements} />
       </div>
+
+      {/* Standards used */}
+      {standardsUsed.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+          <h2 className="text-base font-semibold text-gray-800">Master Standards Used</h2>
+          <ul className="divide-y divide-gray-100">
+            {standardsUsed.map((s) => {
+              const due = new Date(s.due_at)
+              const overdue = due < new Date()
+              return (
+                <li key={s.id} className="py-2.5 flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{s.name}</p>
+                    <p className="text-xs text-gray-500">
+                      S/N: {s.serial_number}{s.manufacturer ? ` · ${s.manufacturer}` : ''}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border ${overdue ? 'bg-red-50 text-red-700 border-red-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                    {overdue ? 'Overdue' : `Due ${due.toLocaleDateString()}`}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       {/* Continue editing */}
       {record.status === 'in_progress' && (
@@ -442,6 +580,76 @@ export default function CalibrationDetail() {
           )}
         </div>
       )}
+
+      {/* Send certificate by email */}
+      {canGeneratePdf && (
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+          <h2 className="text-base font-semibold text-gray-800">Send Certificate by Email</h2>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={emailRecipient}
+              onChange={(e) => { setEmailRecipient(e.target.value); setEmailSent(false); setEmailError(null) }}
+              placeholder="recipient@example.com"
+              className="flex-1 text-sm px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+            />
+            <button
+              type="button"
+              onClick={handleSendEmail}
+              disabled={sendingEmail || !emailRecipient}
+              className="inline-flex items-center gap-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm px-4 py-2 rounded-lg transition-colors"
+            >
+              <Send size={15} />
+              {sendingEmail ? 'Sending…' : 'Send'}
+            </button>
+          </div>
+          {emailSent && <p className="text-sm text-green-600">Certificate sent successfully.</p>}
+          {emailError && <p className="text-sm text-red-600">{emailError}</p>}
+        </div>
+      )}
+
+      {/* External certificate upload / view */}
+      <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+        <h2 className="text-base font-semibold text-gray-800">External Certificate</h2>
+        {record.certificate_url ? (
+          <div className="space-y-3">
+            <embed
+              src={record.certificate_url}
+              type="application/pdf"
+              className="w-full rounded-lg border border-gray-200"
+              style={{ height: '600px' }}
+            />
+            <a
+              href={record.certificate_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-brand-600 hover:text-brand-700 font-medium text-sm underline underline-offset-2"
+            >
+              <ExternalLink size={16} />
+              Open in new tab
+            </a>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-500">Attach a PDF certificate from an external calibration lab.</p>
+            <label className={`w-full inline-flex items-center justify-center gap-2 border border-dashed border-gray-300 hover:border-brand-400 bg-gray-50 hover:bg-brand-50 text-gray-600 hover:text-brand-700 font-medium text-sm rounded-xl min-h-[48px] px-4 py-3 cursor-pointer transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
+              <Upload size={16} />
+              {uploading ? 'Uploading…' : 'Upload Certificate PDF'}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf"
+                className="sr-only"
+                onChange={handleCertificateUpload}
+                disabled={uploading}
+              />
+            </label>
+            {uploadError && (
+              <p className="text-sm text-red-600">{uploadError}</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

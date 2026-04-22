@@ -17,6 +17,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import { useAsset } from '../../hooks/useAssets'
+import { useCalibrationsByAsset } from '../../hooks/useCalibration'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -88,6 +89,7 @@ export default function AssetDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { data: asset, isLoading, isError } = useAsset(id ?? '')
+  const { data: calibrations = [] } = useCalibrationsByAsset(id ?? '')
 
   if (isLoading) {
     return (
@@ -207,13 +209,51 @@ export default function AssetDetail() {
           <h2 className="pt-5 pb-4 text-sm font-semibold uppercase tracking-wide text-gray-400">
             Calibration History
           </h2>
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
-            <ClipboardList size={36} className="mb-3 text-gray-300" />
-            <p className="text-base font-medium text-gray-500">No calibration records yet</p>
-            <p className="mt-1 text-sm text-gray-400">
-              Completed calibrations will appear here.
-            </p>
-          </div>
+          {calibrations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
+              <ClipboardList size={36} className="mb-3 text-gray-300" />
+              <p className="text-base font-medium text-gray-500">No calibration records yet</p>
+              <p className="mt-1 text-sm text-gray-400">Completed calibrations will appear here.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {calibrations.map((rec) => {
+                const statusColors: Record<string, string> = {
+                  approved: 'bg-green-100 text-green-700',
+                  pending_approval: 'bg-blue-100 text-blue-700',
+                  in_progress: 'bg-yellow-100 text-yellow-700',
+                  rejected: 'bg-red-100 text-red-700',
+                }
+                const statusLabels: Record<string, string> = {
+                  approved: 'Approved',
+                  pending_approval: 'Pending',
+                  in_progress: 'In Progress',
+                  rejected: 'Rejected',
+                }
+                return (
+                  <Link
+                    key={rec.id}
+                    to={`/calibrations/${rec.id}`}
+                    className="flex items-center justify-between py-3 hover:bg-gray-50 -mx-5 px-5 transition-colors"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {new Date(rec.performed_at).toLocaleDateString(undefined, {
+                          year: 'numeric', month: 'short', day: 'numeric',
+                        })}
+                      </p>
+                      {rec.sales_number && (
+                        <p className="text-xs text-gray-400">SO: {rec.sales_number}</p>
+                      )}
+                    </div>
+                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusColors[rec.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {statusLabels[rec.status] ?? rec.status}
+                    </span>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
         </div>
       </main>
     </div>

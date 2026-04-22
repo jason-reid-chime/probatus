@@ -1,9 +1,29 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, AlertTriangle, Clock, Shield, Pencil, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useStandards, useDeleteStandard } from '../../hooks/useStandards'
 import { isStandardExpired, isStandardDueSoon } from '../../types'
 import type { MasterStandard } from '../../types'
+import { supabase } from '../../lib/supabase'
+
+function useCalibrationCounts() {
+  const [counts, setCounts] = useState<Record<string, number>>({})
+  useEffect(() => {
+    supabase
+      .from('calibration_standards_used')
+      .select('standard_id')
+      .then(({ data }) => {
+        if (!data) return
+        const map: Record<string, number> = {}
+        for (const row of data) {
+          map[row.standard_id] = (map[row.standard_id] ?? 0) + 1
+        }
+        setCounts(map)
+      })
+  }, [])
+  return counts
+}
 
 function StatusBadge({ standard }: { standard: MasterStandard }) {
   if (isStandardExpired(standard)) {
@@ -39,6 +59,7 @@ export default function StandardsList() {
   const { profile } = useAuth()
   const { data: standards = [], isLoading } = useStandards()
   const deleteMutation = useDeleteStandard()
+  const calibrationCounts = useCalibrationCounts()
 
   if (profile?.role === 'technician') {
     navigate('/', { replace: true })
@@ -99,6 +120,7 @@ export default function StandardsList() {
                 <th className="px-4 py-3 font-semibold text-gray-700">Serial #</th>
                 <th className="px-4 py-3 font-semibold text-gray-700 hidden md:table-cell">Cert Ref</th>
                 <th className="px-4 py-3 font-semibold text-gray-700">Due Date</th>
+                <th className="px-4 py-3 font-semibold text-gray-700 hidden md:table-cell">Used in</th>
                 <th className="px-4 py-3 font-semibold text-gray-700">Status</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -118,6 +140,11 @@ export default function StandardsList() {
                   <td className="px-4 py-3 font-mono text-gray-700">{s.serial_number}</td>
                   <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{s.certificate_ref ?? '—'}</td>
                   <td className="px-4 py-3 text-gray-700">{s.due_at}</td>
+                  <td className="px-4 py-3 hidden md:table-cell">
+                    <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                      {calibrationCounts[s.id] ?? 0} calibration{(calibrationCounts[s.id] ?? 0) !== 1 ? 's' : ''}
+                    </span>
+                  </td>
                   <td className="px-4 py-3"><StatusBadge standard={s} /></td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 justify-end">
