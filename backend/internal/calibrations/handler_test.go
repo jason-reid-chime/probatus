@@ -2,13 +2,12 @@ package calibrations
 
 import (
 	"context"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -84,6 +83,13 @@ func withTenant(r *http.Request) *http.Request {
 func withTenantAndUser(r *http.Request) *http.Request {
 	ctx := middleware.WithTenantID(r.Context(), "tenant-1")
 	ctx = middleware.WithUserID(ctx, "user-1")
+	return r.WithContext(ctx)
+}
+
+func withTenantUserAndRole(r *http.Request, role string) *http.Request {
+	ctx := middleware.WithTenantID(r.Context(), "tenant-1")
+	ctx = middleware.WithUserID(ctx, "user-1")
+	ctx = middleware.WithRole(ctx, role)
 	return r.WithContext(ctx)
 }
 
@@ -170,10 +176,9 @@ func TestGet_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestApprove_NotFound(t *testing.T) {
-	// Exec returns 0 rows affected
 	h := newHandler(&mockDB{})
 	req := routeWithID(
-		withTenantAndUser(httptest.NewRequest(http.MethodPost, "/calibrations/abc/approve", strings.NewReader(`{}`))),
+		withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/approve", strings.NewReader(`{}`)), "supervisor"),
 		"abc",
 	)
 	rec := httptest.NewRecorder()

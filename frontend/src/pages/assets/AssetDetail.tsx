@@ -115,7 +115,20 @@ export default function AssetDetail() {
     )
   }
 
-  const status = getStatus(asset.next_due_at)
+  // Derive calibration dates from history when the asset fields aren't populated yet
+  // (they're written by the backend on approval; new assets start null).
+  const approvedCals = calibrations.filter((c) => c.status === 'approved')
+  const lastCalibratedAt = asset.last_calibrated_at
+    ?? (approvedCals.length > 0 ? approvedCals[0].performed_at : undefined)
+  const nextDueAt = asset.next_due_at
+    ?? (lastCalibratedAt
+      ? new Date(
+          new Date(lastCalibratedAt).getTime() +
+          asset.calibration_interval_days * 86400000,
+        ).toISOString().slice(0, 10)
+      : undefined)
+
+  const status = getStatus(nextDueAt)
   const { label: statusLabel, className: statusClass } = STATUS_CONFIG[status]
 
   const rangeStr =
@@ -198,8 +211,8 @@ export default function AssetDetail() {
             label="Calibration Interval"
             value={`${asset.calibration_interval_days} days`}
           />
-          <DetailRow icon={Clock} label="Last Calibrated" value={formatDate(asset.last_calibrated_at)} />
-          <DetailRow icon={Calendar} label="Next Due" value={formatDate(asset.next_due_at)} />
+          <DetailRow icon={Clock} label="Last Calibrated" value={formatDate(lastCalibratedAt)} />
+          <DetailRow icon={Calendar} label="Next Due" value={formatDate(nextDueAt)} />
           <DetailRow icon={MapPin} label="Location" value={asset.location} />
           <DetailRow icon={StickyNote} label="Notes" value={asset.notes} />
         </div>

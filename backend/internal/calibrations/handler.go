@@ -429,23 +429,42 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	tag, err := h.pool.Exec(r.Context(),
+
+	// Approve the record and get the asset_id + performed_at back so we can
+	// update the asset's calibration dates in the same transaction.
+	var assetID string
+	var performedAt time.Time
+	err := h.pool.QueryRow(r.Context(),
 		`UPDATE calibration_records
 		 SET status = 'approved',
 		     supervisor_id = $3,
 		     approved_at = $4,
 		     supervisor_signature = COALESCE(NULLIF($5,''), supervisor_signature)
-		 WHERE id = $1 AND tenant_id = $2 AND status = 'pending_approval'`,
+		 WHERE id = $1 AND tenant_id = $2 AND status = 'pending_approval'
+		 RETURNING asset_id::text, performed_at`,
 		id, tenantID, userID, now, body.SupervisorSignature,
-	)
+	).Scan(&assetID, &performedAt)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "calibration not found or not pending approval")
+		return
+	}
 	if err != nil {
 		slog.Error("calibrations.Approve: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to approve calibration")
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "calibration not found or not pending approval")
-		return
+
+	// Update asset's last_calibrated_at and next_due_at based on calibration_interval_days.
+	if _, err := h.pool.Exec(r.Context(),
+		`UPDATE assets
+		 SET last_calibrated_at = $2,
+		     next_due_at = $2::date + (calibration_interval_days || ' days')::interval
+		 WHERE id = $1
+		   AND (last_calibrated_at IS NULL OR last_calibrated_at <= $2)`,
+		assetID, performedAt,
+	); err != nil {
+		slog.Error("calibrations.Approve: failed to update asset dates", "asset_id", assetID, "error", err)
+		// Non-fatal — approval succeeded; dates will be stale until next approval.
 	}
 
 	slog.Info("calibrations.Approve: record approved", "record_id", id, "tenant_id", tenantID, "supervisor_id", userID)
