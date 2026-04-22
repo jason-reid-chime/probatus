@@ -1,6 +1,7 @@
 package assets
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,13 @@ import (
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
+// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 // isUniqueViolation returns true when err is a PostgreSQL unique-constraint
 // violation (SQLSTATE 23505).
 func isUniqueViolation(err error) bool {
@@ -27,7 +35,7 @@ func isUniqueViolation(err error) bool {
 
 // Handler holds the DB pool for the assets resource.
 type Handler struct {
-	pool *pgxpool.Pool
+	pool querier
 }
 
 // NewHandler creates a new assets Handler.

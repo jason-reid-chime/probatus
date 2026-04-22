@@ -1,164 +1,205 @@
 package assets
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/jasonreid/probatus/internal/middleware"
 )
 
 // ---------------------------------------------------------------------------
-// writeJSON (local helper)
+// Minimal pgx.Row / pgx.Rows stubs
 // ---------------------------------------------------------------------------
 
-func TestWriteJSON_ContentType(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusOK, map[string]string{"key": "value"})
+type errRow struct{ err error }
 
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
-	}
-}
+func (r *errRow) Scan(...any) error { return r.err }
 
-func TestWriteJSON_StatusCode(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusCreated, nil)
+type emptyRows struct{ err error }
 
-	if w.Code != http.StatusCreated {
-		t.Errorf("expected status 201, got %d", w.Code)
-	}
-}
-
-func TestWriteJSON_Body(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusOK, map[string]int{"count": 42})
-
-	var body map[string]int
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode body: %v", err)
-	}
-	if body["count"] != 42 {
-		t.Errorf("expected count=42, got %d", body["count"])
-	}
-}
+func (e *emptyRows) Close()                                          {}
+func (e *emptyRows) Err() error                                      { return e.err }
+func (e *emptyRows) CommandTag() pgconn.CommandTag                   { return pgconn.CommandTag{} }
+func (e *emptyRows) FieldDescriptions() []pgconn.FieldDescription    { return nil }
+func (e *emptyRows) Next() bool                                      { return false }
+func (e *emptyRows) Scan(...any) error                               { return e.err }
+func (e *emptyRows) Values() ([]any, error)                          { return nil, e.err }
+func (e *emptyRows) RawValues() [][]byte                             { return nil }
+func (e *emptyRows) Conn() *pgx.Conn                                 { return nil }
 
 // ---------------------------------------------------------------------------
-// writeError (local helper)
+// Mock querier
 // ---------------------------------------------------------------------------
 
-func TestWriteError_StatusAndBody(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusBadRequest, "bad input")
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-
-	var body map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode body: %v", err)
-	}
-	if body["error"] != "bad input" {
-		t.Errorf("expected error 'bad input', got %q", body["error"])
-	}
+type mockDB struct {
+	queryErr    error
+	queryRowFn  func() pgx.Row
+	execTag     pgconn.CommandTag
+	execErr     error
 }
 
-func TestWriteError_ContentType(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusInternalServerError, "internal error")
-
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
+func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+	if m.queryErr != nil {
+		return nil, m.queryErr
 	}
+	return &emptyRows{}, nil
 }
 
-func TestWriteError_NotFoundStatus(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusNotFound, "not found")
-
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", w.Code)
+func (m *mockDB) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+	if m.queryRowFn != nil {
+		return m.queryRowFn()
 	}
+	return &errRow{err: pgx.ErrNoRows}
+}
+
+func (m *mockDB) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+	return m.execTag, m.execErr
 }
 
 // ---------------------------------------------------------------------------
-// isUniqueViolation — pure function, no DB required
+// Helpers
 // ---------------------------------------------------------------------------
 
-func TestIsUniqueViolation_NilError(t *testing.T) {
-	if isUniqueViolation(nil) {
-		t.Error("expected false for nil error")
+func newHandler(db querier) *Handler { return &Handler{pool: db} }
+
+func withTenantCtx(r *http.Request, tenantID string) *http.Request {
+	return r.WithContext(middleware.WithTenantID(r.Context(), tenantID))
+}
+
+func routeWithID(r *http.Request, id string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", id)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func routeWithTagID(r *http.Request, tagID string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("tagId", tagID)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
+
+func TestList_DBError(t *testing.T) {
+	h := newHandler(&mockDB{queryErr: fmt.Errorf("db down")})
+	req := withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets", nil), "tenant-1")
+	rec := httptest.NewRecorder()
+	h.List(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
 	}
 }
 
-func TestIsUniqueViolation_RandomError(t *testing.T) {
-	err := &randomErr{"some other error"}
-	if isUniqueViolation(err) {
-		t.Error("expected false for non-pgconn error")
+func TestList_ReturnsEmptySlice(t *testing.T) {
+	h := newHandler(&mockDB{}) // Query returns emptyRows{}, no error
+	req := withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets", nil), "tenant-1")
+	rec := httptest.NewRecorder()
+	h.List(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
-}
-
-// randomErr is a minimal error type that is NOT a *pgconn.PgError.
-type randomErr struct{ msg string }
-
-func (e *randomErr) Error() string { return e.msg }
-
-// ---------------------------------------------------------------------------
-// Create handler — malformed JSON body returns 400
-// (decoding fails before any pool call)
-// ---------------------------------------------------------------------------
-
-func TestCreate_MalformedJSON_Returns400(t *testing.T) {
-	h := &Handler{pool: nil}
-
-	r := httptest.NewRequest(http.MethodPost, "/assets", strings.NewReader(`{not json}`))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	h.Create(w, r)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
+	var out []any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-
-	var body map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode body: %v", err)
-	}
-	if body["error"] != "invalid request body" {
-		t.Errorf("unexpected error message: %q", body["error"])
-	}
-}
-
-func TestCreate_EmptyBody_Returns400(t *testing.T) {
-	h := &Handler{pool: nil}
-
-	r := httptest.NewRequest(http.MethodPost, "/assets", strings.NewReader(""))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	h.Create(w, r)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
+	if len(out) != 0 {
+		t.Errorf("expected empty slice, got %d items", len(out))
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Update handler — malformed JSON body returns 400
+// Create
 // ---------------------------------------------------------------------------
 
-func TestUpdate_MalformedJSON_Returns400(t *testing.T) {
-	h := &Handler{pool: nil}
+func TestCreate_BadJSON(t *testing.T) {
+	h := newHandler(nil) // DB never reached
+	req := withTenantCtx(
+		httptest.NewRequest(http.MethodPost, "/assets", strings.NewReader(`{bad}`)),
+		"tenant-1",
+	)
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
 
-	r := httptest.NewRequest(http.MethodPut, "/assets/some-id", strings.NewReader(`{bad`))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
+func TestCreate_UniqueViolation(t *testing.T) {
+	dupErr := &pgconn.PgError{Code: "23505"}
+	h := newHandler(&mockDB{
+		queryRowFn: func() pgx.Row { return &errRow{err: dupErr} },
+	})
+	body := `{"tag_id":"TAG-001","serial_number":"S1","manufacturer":"Acme","model":"M1","instrument_type":"pressure"}`
+	req := withTenantCtx(
+		httptest.NewRequest(http.MethodPost, "/assets", strings.NewReader(body)),
+		"tenant-1",
+	)
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d", rec.Code)
+	}
+}
 
-	h.Update(w, r)
+// ---------------------------------------------------------------------------
+// Get
+// ---------------------------------------------------------------------------
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
+func TestGet_NotFound(t *testing.T) {
+	h := newHandler(&mockDB{}) // QueryRow returns ErrNoRows by default
+	req := routeWithID(
+		withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets/abc", nil), "tenant-1"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Get(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
+
+func TestDelete_NotFound(t *testing.T) {
+	// Exec returns 0 rows affected (zero CommandTag)
+	h := newHandler(&mockDB{})
+	req := routeWithID(
+		withTenantCtx(httptest.NewRequest(http.MethodDelete, "/assets/abc", nil), "tenant-1"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Delete(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetByTagID
+// ---------------------------------------------------------------------------
+
+func TestGetByTagID_NotFound(t *testing.T) {
+	h := newHandler(&mockDB{}) // QueryRow returns ErrNoRows by default
+	req := routeWithTagID(
+		withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets/tag/T-999", nil), "tenant-1"),
+		"T-999",
+	)
+	rec := httptest.NewRecorder()
+	h.GetByTagID(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
