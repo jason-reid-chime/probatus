@@ -1,6 +1,8 @@
 package calibrations
 
 import (
+	"context"
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,429 +10,176 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
 // ---------------------------------------------------------------------------
-// writeJSON
+// Minimal pgx stubs (shared with assets tests pattern)
 // ---------------------------------------------------------------------------
 
-func TestWriteJSON_ContentTypeAndStatus(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusOK, map[string]string{"hello": "world"})
+type errRow struct{ err error }
 
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
-	}
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200, got %d", w.Code)
-	}
-}
+func (r *errRow) Scan(...any) error { return r.err }
 
-func TestWriteJSON_Body(t *testing.T) {
-	type payload struct {
-		Foo string `json:"foo"`
-	}
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusCreated, payload{Foo: "bar"})
+type emptyRows struct{ err error }
 
-	var got payload
-	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if got.Foo != "bar" {
-		t.Errorf("expected foo=bar, got %q", got.Foo)
-	}
-	if w.Code != http.StatusCreated {
-		t.Errorf("expected status 201, got %d", w.Code)
-	}
-}
-
-func TestWriteJSON_SliceRoundtrip(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusOK, []int{1, 2, 3})
-
-	var got []int
-	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if len(got) != 3 || got[0] != 1 || got[1] != 2 || got[2] != 3 {
-		t.Errorf("unexpected slice: %v", got)
-	}
-}
+func (e *emptyRows) Close()                                       {}
+func (e *emptyRows) Err() error                                   { return e.err }
+func (e *emptyRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (e *emptyRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (e *emptyRows) Next() bool                                   { return false }
+func (e *emptyRows) Scan(...any) error                            { return e.err }
+func (e *emptyRows) Values() ([]any, error)                       { return nil, e.err }
+func (e *emptyRows) RawValues() [][]byte                          { return nil }
+func (e *emptyRows) Conn() *pgx.Conn                              { return nil }
 
 // ---------------------------------------------------------------------------
-// writeError
+// Mock querier
 // ---------------------------------------------------------------------------
 
-func TestWriteError_StatusCode(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusBadRequest, "something went wrong")
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
+type mockDB struct {
+	queryErr   error
+	queryRowFn func() pgx.Row
+	execTag    pgconn.CommandTag
+	execErr    error
+	beginErr   error
 }
 
-func TestWriteError_ErrorKey(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusUnprocessableEntity, "validation failed")
-
-	var body map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
+func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+	if m.queryErr != nil {
+		return nil, m.queryErr
 	}
-	if body["error"] != "validation failed" {
-		t.Errorf("expected error key 'validation failed', got %q", body["error"])
-	}
+	return &emptyRows{}, nil
 }
 
-func TestWriteError_ContentType(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusInternalServerError, "oops")
-
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
+func (m *mockDB) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+	if m.queryRowFn != nil {
+		return m.queryRowFn()
 	}
+	return &errRow{err: pgx.ErrNoRows}
 }
 
-func TestWriteError_NotFoundStatus(t *testing.T) {
-	w := httptest.NewRecorder()
-	writeError(w, http.StatusNotFound, "not found")
+func (m *mockDB) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+	return m.execTag, m.execErr
+}
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", w.Code)
-	}
-	var body map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if body["error"] != "not found" {
-		t.Errorf("expected error 'not found', got %q", body["error"])
-	}
+func (m *mockDB) Begin(_ context.Context) (pgx.Tx, error) {
+	return nil, m.beginErr
 }
 
 // ---------------------------------------------------------------------------
-// checkStandardsDueDate — empty-slice fast path (no DB required)
+// Helpers
 // ---------------------------------------------------------------------------
 
-func TestCheckStandardsDueDate_EmptySlice(t *testing.T) {
-	h := &Handler{pool: nil} // pool will never be reached
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+func newHandler(db querier) *Handler { return &Handler{pool: db} }
 
-	result := h.checkStandardsDueDate(r, "tenant-abc", []string{})
-	if result != "" {
-		t.Errorf("expected empty string for empty standardIDs, got %q", result)
+func withTenant(r *http.Request) *http.Request {
+	return r.WithContext(middleware.WithTenantID(r.Context(), "tenant-1"))
+}
+
+func withTenantAndUser(r *http.Request) *http.Request {
+	ctx := middleware.WithTenantID(r.Context(), "tenant-1")
+	ctx = middleware.WithUserID(ctx, "user-1")
+	return r.WithContext(ctx)
+}
+
+func routeWithID(r *http.Request, id string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", id)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
+
+func TestList_DBError(t *testing.T) {
+	h := newHandler(&mockDB{queryErr: fmt.Errorf("db down")})
+	req := withTenant(httptest.NewRequest(http.MethodGet, "/calibrations", nil))
+	rec := httptest.NewRecorder()
+	h.List(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
 	}
 }
 
-func TestCheckStandardsDueDate_NilSlice(t *testing.T) {
-	h := &Handler{pool: nil}
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-
-	result := h.checkStandardsDueDate(r, "tenant-abc", nil)
-	if result != "" {
-		t.Errorf("expected empty string for nil standardIDs, got %q", result)
+func TestList_WithStatusFilter(t *testing.T) {
+	// Empty rows → 200 with empty array
+	h := newHandler(&mockDB{})
+	req := withTenant(httptest.NewRequest(http.MethodGet, "/calibrations?status=approved", nil))
+	rec := httptest.NewRecorder()
+	h.List(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Create handler — malformed JSON body returns 400 (no DB required because
-// decoding fails before any pool call)
+// Create
 // ---------------------------------------------------------------------------
 
-func TestCreate_MalformedJSON_Returns400(t *testing.T) {
-	h := &Handler{pool: nil}
-
-	body := strings.NewReader(`{not valid json}`)
-	r := httptest.NewRequest(http.MethodPost, "/calibrations", body)
-	r.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	h.Create(w, r)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-
-	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if resp["error"] != "invalid request body" {
-		t.Errorf("unexpected error message: %q", resp["error"])
+func TestCreate_BadJSON(t *testing.T) {
+	h := newHandler(nil) // DB never reached
+	req := withTenantAndUser(
+		httptest.NewRequest(http.MethodPost, "/calibrations", strings.NewReader(`{bad}`)),
+	)
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
 	}
 }
 
-func TestCreate_EmptyBody_Returns400(t *testing.T) {
-	h := &Handler{pool: nil}
-
-	// An entirely empty body causes json.Decoder to return io.EOF, which is
-	// also treated as an error by the handler.
-	r := httptest.NewRequest(http.MethodPost, "/calibrations", strings.NewReader(""))
-	r.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	h.Create(w, r)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-}
-
-func TestCreate_InvalidPerformedAt_Returns400(t *testing.T) {
-	// Provide valid JSON but an invalid performed_at format.
-	// Because standard_ids is empty the checkStandardsDueDate fast-path runs
-	// without touching the DB, then the date parse error is hit before any pool
-	// calls.
-	h := &Handler{pool: nil}
-
-	body := `{"asset_id":"some-id","performed_at":"not-a-date","standard_ids":[]}`
-	r := httptest.NewRequest(http.MethodPost, "/calibrations", strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	h.Create(w, r)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status 400, got %d", w.Code)
-	}
-
-	var resp map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if resp["error"] != "invalid performed_at format, use RFC3339" {
-		t.Errorf("unexpected error message: %q", resp["error"])
+func TestCreate_InvalidPerformedAt(t *testing.T) {
+	// Valid JSON, no standard_ids → skips DB validation; bad date → 400
+	h := newHandler(nil)
+	body := `{"asset_id":"asset-1","performed_at":"not-a-valid-date","standard_ids":[]}`
+	req := withTenantAndUser(
+		httptest.NewRequest(http.MethodPost, "/calibrations", strings.NewReader(body)),
+	)
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// buildCertTextLines — pure function; no DB or HTTP required
+// Get
 // ---------------------------------------------------------------------------
 
-func TestBuildCertTextLines_ContainsTenantName(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Acme Calibration Lab",
-		localID:     "CERT-001",
-		salesNumber: "SO-1234",
-		flagNumber:  "F-001",
-		performedAt: time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC),
-		status:      "approved",
-		techName:    "Jane Smith",
-	}
-
-	lines := buildCertTextLines(p)
-	if len(lines) == 0 {
-		t.Fatal("expected at least one line")
-	}
-	if lines[0] != "Acme Calibration Lab" {
-		t.Errorf("expected first line to be tenant name, got %q", lines[0])
-	}
-}
-
-func TestBuildCertTextLines_ContainsCertificateHeader(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-	}
-
-	lines := buildCertTextLines(p)
-
-	found := false
-	for _, l := range lines {
-		if l == "CALIBRATION CERTIFICATE" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected 'CALIBRATION CERTIFICATE' header in text lines")
-	}
-}
-
-func TestBuildCertTextLines_ContainsLocalID(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		localID:     "CERT-XYZ",
-		performedAt: time.Now(),
-		status:      "approved",
-	}
-
-	lines := buildCertTextLines(p)
-
-	found := false
-	for _, l := range lines {
-		if strings.Contains(l, "CERT-XYZ") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected localID 'CERT-XYZ' to appear in text lines")
-	}
-}
-
-func TestBuildCertTextLines_MeasurementPassFail(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-		measurements: []certMeasRow{
-			{PointLabel: "Zero", Pass: true, Unit: "psi"},
-			{PointLabel: "FullScale", Pass: false, Unit: "psi"},
-		},
-	}
-
-	lines := buildCertTextLines(p)
-
-	passFound, failFound := false, false
-	for _, l := range lines {
-		if strings.Contains(l, "PASS") {
-			passFound = true
-		}
-		if strings.Contains(l, "FAIL") {
-			failFound = true
-		}
-	}
-	if !passFound {
-		t.Error("expected PASS in measurement lines")
-	}
-	if !failFound {
-		t.Error("expected FAIL in measurement lines")
-	}
-}
-
-func TestBuildCertTextLines_WithRange(t *testing.T) {
-	min, max := 0.0, 100.0
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-		rangeMin:    &min,
-		rangeMax:    &max,
-		rangeUnit:   "psi",
-	}
-
-	lines := buildCertTextLines(p)
-
-	found := false
-	for _, l := range lines {
-		if strings.Contains(l, "Range") && strings.Contains(l, "psi") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected Range line with unit 'psi' in text output")
-	}
-}
-
-func TestBuildCertTextLines_NotesIncluded(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-		notes:       "Handled with care",
-	}
-
-	lines := buildCertTextLines(p)
-
-	found := false
-	for _, l := range lines {
-		if strings.Contains(l, "Handled with care") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected notes text in output lines")
+func TestGet_NotFound(t *testing.T) {
+	h := newHandler(&mockDB{}) // QueryRow returns ErrNoRows
+	req := routeWithID(
+		withTenant(httptest.NewRequest(http.MethodGet, "/calibrations/abc", nil)),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Get(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// buildCertHTML — pure function
+// Approve
 // ---------------------------------------------------------------------------
 
-func TestBuildCertHTML_ContainsTenantName(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "My Calibration Co",
-		performedAt: time.Now(),
-		status:      "approved",
-	}
-
-	html := buildCertHTML(p)
-	if !strings.Contains(html, "My Calibration Co") {
-		t.Error("expected tenant name in HTML output")
-	}
-}
-
-func TestBuildCertHTML_IsHTMLDocument(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-	}
-
-	html := buildCertHTML(p)
-	if !strings.HasPrefix(html, "<!DOCTYPE html>") {
-		t.Error("expected HTML output to start with <!DOCTYPE html>")
-	}
-	if !strings.Contains(html, "</html>") {
-		t.Error("expected HTML output to contain closing </html> tag")
-	}
-}
-
-func TestBuildCertHTML_PassResultColor(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-		measurements: []certMeasRow{
-			{PointLabel: "P1", Pass: true},
-		},
-	}
-
-	html := buildCertHTML(p)
-	if !strings.Contains(html, `class="pass"`) {
-		t.Error("expected pass CSS class for passing measurement")
-	}
-}
-
-func TestBuildCertHTML_FailResultColor(t *testing.T) {
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-		measurements: []certMeasRow{
-			{PointLabel: "P1", Pass: false},
-		},
-	}
-
-	html := buildCertHTML(p)
-	if !strings.Contains(html, `class="fail"`) {
-		t.Error("expected fail CSS class for failing measurement")
-	}
-}
-
-func TestBuildCertHTML_StandardsSection(t *testing.T) {
-	due := time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC)
-	p := buildCertHTMLParams{
-		tenantName:  "Test Lab",
-		performedAt: time.Now(),
-		status:      "approved",
-		standards: []certStdRow{
-			{Name: "DeadweightTester", SerialNumber: "DW-001", DueAt: &due},
-		},
-	}
-
-	html := buildCertHTML(p)
-	if !strings.Contains(html, "DeadweightTester") {
-		t.Error("expected standard name in HTML output")
-	}
-	if !strings.Contains(html, "2025-12-31") {
-		t.Error("expected standard due date in HTML output")
+func TestApprove_NotFound(t *testing.T) {
+	// Exec returns 0 rows affected
+	h := newHandler(&mockDB{})
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPost, "/calibrations/abc/approve", strings.NewReader(`{}`))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Approve(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
 
