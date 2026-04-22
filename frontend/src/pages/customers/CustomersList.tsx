@@ -22,7 +22,6 @@ export default function CustomersList() {
 
   useEffect(() => {
     if (!profile?.tenant_id) return
-    setLoading(true)
     supabase
       .from('customers')
       .select('*, assets(count)')
