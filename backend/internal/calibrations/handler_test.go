@@ -254,3 +254,119 @@ func TestApprove_EmptyBody_PassesRoleCheck(t *testing.T) {
 		t.Error("admin role should not get 403")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// buildCertTextLines and buildCertHTML — pure function tests
+// ---------------------------------------------------------------------------
+
+func minimalParams() buildCertHTMLParams {
+	return buildCertHTMLParams{
+		recordID:       "rec-1",
+		tenantName:     "Valatix Inc",
+		salesNumber:    "SO-100",
+		performedAt:    mustParseTime("2026-01-15T10:00:00Z"),
+		status:         "approved",
+		techName:       "Jane Tech",
+		assetTag:       "TAG-001",
+		serialNumber:   "SN-999",
+		manufacturer:   "Fluke",
+		model:          "718",
+		instrumentType: "pressure",
+		rangeUnit:      "PSI",
+		measurements: []certMeasRow{
+			{PointLabel: "0%", StandardValue: 0, MeasuredValue: 0.01, ErrorPct: 0.01, Pass: true},
+		},
+	}
+}
+
+func mustParseTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+func TestBuildCertTextLines_ContainsKeyFields(t *testing.T) {
+	p := minimalParams()
+	lines := buildCertTextLines(p)
+	joined := strings.Join(lines, "\n")
+
+	for _, want := range []string{"TAG-001", "SN-999", "Fluke", "SO-100", "Jane Tech", "Valatix Inc"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected %q in text output", want)
+		}
+	}
+}
+
+func TestBuildCertTextLines_WithCustomerName(t *testing.T) {
+	p := minimalParams()
+	p.customerName = "Acme Lab"
+	lines := buildCertTextLines(p)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "Acme Lab") {
+		t.Errorf("expected customer name in text output")
+	}
+}
+
+func TestBuildCertTextLines_WithRange(t *testing.T) {
+	p := minimalParams()
+	lo, hi := 0.0, 100.0
+	p.rangeMin = &lo
+	p.rangeMax = &hi
+	lines := buildCertTextLines(p)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "100") {
+		t.Errorf("expected range in text output")
+	}
+}
+
+func TestBuildCertHTML_ContainsKeyFields(t *testing.T) {
+	p := minimalParams()
+	html := buildCertHTML(p)
+
+	for _, want := range []string{"TAG-001", "SN-999", "Fluke", "SO-100", "Valatix Inc"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("expected %q in HTML output", want)
+		}
+	}
+}
+
+func TestBuildCertHTML_WithCustomerName(t *testing.T) {
+	p := minimalParams()
+	p.customerName = "Acme Lab"
+	html := buildCertHTML(p)
+	if !strings.Contains(html, "Acme Lab") {
+		t.Errorf("expected customer name in HTML output")
+	}
+}
+
+func TestBuildCertHTML_WithoutCustomerName(t *testing.T) {
+	p := minimalParams()
+	p.customerName = ""
+	html := buildCertHTML(p)
+	// Should not contain "Client:" label when no customer
+	if strings.Contains(html, ">Client:<") {
+		t.Errorf("should not render Client field when customerName is empty")
+	}
+}
+
+func TestBuildCertHTML_WithStandards(t *testing.T) {
+	p := minimalParams()
+	p.standards = []certStdRow{
+		{Name: "Ref Gauge", SerialNumber: "STD-001", Manufacturer: "Druck"},
+	}
+	html := buildCertHTML(p)
+	if !strings.Contains(html, "Ref Gauge") {
+		t.Errorf("expected standard name in HTML output")
+	}
+}
+
+func TestBuildCertHTML_WithSupervisor(t *testing.T) {
+	p := minimalParams()
+	p.supervisorName = "Bob Supervisor"
+	html := buildCertHTML(p)
+	if !strings.Contains(html, "Bob Supervisor") {
+		t.Errorf("expected supervisor name in HTML output")
+	}
+}
