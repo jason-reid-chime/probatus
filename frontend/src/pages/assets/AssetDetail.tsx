@@ -16,6 +16,8 @@ import {
   Clock,
   AlertCircle,
   Loader2,
+  ExternalLink,
+  ShieldCheck,
 } from 'lucide-react'
 import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
@@ -41,6 +43,15 @@ function formatDate(iso: string | undefined): string {
   })
 }
 
+function formatDateShort(iso: string | undefined): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
 type CalibrationStatus = 'overdue' | 'due-soon' | 'due-ok' | 'ok'
 
 function getStatus(nextDueAt: string | undefined): CalibrationStatus {
@@ -57,6 +68,30 @@ const STATUS_CONFIG: Record<CalibrationStatus, { label: string; className: strin
   'due-soon': { label: 'Due Within 30 Days', className: 'bg-amber-100 text-amber-500 border border-amber-200' },
   'due-ok': { label: 'Due Within 90 Days', className: 'bg-yellow-100 text-yellow-500 border border-yellow-200' },
   ok: { label: 'OK', className: 'bg-green-100 text-green-600 border border-green-200' },
+}
+
+// ---------------------------------------------------------------------------
+// Result badge helpers
+// ---------------------------------------------------------------------------
+type ResultLabel = 'PASS' | 'FAIL' | 'INCOMPLETE'
+
+function getResultFromStatus(status: string): ResultLabel {
+  if (status === 'approved') return 'PASS'
+  if (status === 'rejected') return 'FAIL'
+  return 'INCOMPLETE'
+}
+
+function ResultBadge({ result }: { result: ResultLabel }) {
+  const cfg: Record<ResultLabel, { className: string }> = {
+    PASS: { className: 'bg-green-100 text-green-700 border border-green-200' },
+    FAIL: { className: 'bg-red-100 text-red-700 border border-red-200' },
+    INCOMPLETE: { className: 'bg-gray-100 text-gray-500 border border-gray-200' },
+  }
+  return (
+    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${cfg[result].className}`}>
+      {result}
+    </span>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +120,27 @@ function DetailRow({
 }
 
 // ---------------------------------------------------------------------------
+// Types for fetched data
+// ---------------------------------------------------------------------------
+interface ProfileRow {
+  id: string
+  full_name: string | null
+}
+
+interface MasterStandard {
+  id: string
+  name: string
+  serial_number: string | null
+  manufacturer: string | null
+  due_at: string | null
+}
+
+interface StandardsUsedRow {
+  standard_id: string
+  master_standards: MasterStandard | null
+}
+
+// ---------------------------------------------------------------------------
 // AssetDetail page
 // ---------------------------------------------------------------------------
 export default function AssetDetail() {
@@ -94,12 +150,12 @@ export default function AssetDetail() {
   const { data: calibrations = [] } = useCalibrationsByAsset(id ?? '')
 
   const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null)
+  const [techNames, setTechNames] = useState<Record<string, string>>({})
+  const [standards, setStandards] = useState<MasterStandard[]>([])
 
+  // Fetch customer
   useEffect(() => {
-    if (!asset?.customer_id) {
-      setCustomer(null)
-      return
-    }
+    if (!asset?.customer_id) return
     supabase
       .from('customers')
       .select('id, name')
@@ -109,6 +165,51 @@ export default function AssetDetail() {
         setCustomer(data as { id: string; name: string } | null)
       })
   }, [asset?.customer_id])
+
+  // Fetch technician names once calibrations are loaded
+  useEffect(() => {
+    if (calibrations.length === 0) return
+    const uniqueIds = [...new Set(calibrations.map((c) => c.technician_id).filter(Boolean))]
+    if (uniqueIds.length === 0) return
+
+    supabase
+      .from('profiles')
+      .select('id, full_name')
+      .in('id', uniqueIds)
+      .then(({ data }) => {
+        if (!data) return
+        const map: Record<string, string> = {}
+        for (const row of data as ProfileRow[]) {
+          map[row.id] = row.full_name ?? 'Unknown'
+        }
+        setTechNames(map)
+      })
+  }, [calibrations])
+
+  // Fetch standards used across all calibrations for this asset
+  useEffect(() => {
+    if (calibrations.length === 0) return
+    const calIds = calibrations.map((c) => c.id)
+
+    supabase
+      .from('calibration_standards_used')
+      .select('standard_id, master_standards(id, name, serial_number, manufacturer, due_at)')
+      .in('record_id', calIds)
+      .then(({ data }) => {
+        if (!data) return
+        const rows = data as unknown as StandardsUsedRow[]
+        // Deduplicate by standard_id
+        const seen = new Set<string>()
+        const deduped: MasterStandard[] = []
+        for (const row of rows) {
+          if (!row.master_standards) continue
+          if (seen.has(row.standard_id)) continue
+          seen.add(row.standard_id)
+          deduped.push(row.master_standards)
+        }
+        setStandards(deduped)
+      })
+  }, [calibrations])
 
   if (isLoading) {
     return (
@@ -258,45 +359,100 @@ export default function AssetDetail() {
               <p className="mt-1 text-sm text-gray-400">Completed calibrations will appear here.</p>
             </div>
           ) : (
-            <div className="divide-y divide-gray-100">
+            <div className="space-y-3">
               {calibrations.map((rec) => {
-                const statusColors: Record<string, string> = {
-                  approved: 'bg-green-100 text-green-700',
-                  pending_approval: 'bg-blue-100 text-blue-700',
-                  in_progress: 'bg-yellow-100 text-yellow-700',
-                  rejected: 'bg-red-100 text-red-700',
-                }
-                const statusLabels: Record<string, string> = {
-                  approved: 'Approved',
-                  pending_approval: 'Pending',
-                  in_progress: 'In Progress',
-                  rejected: 'Rejected',
-                }
+                const result = getResultFromStatus(rec.status)
+                const techName = rec.technician_id ? (techNames[rec.technician_id] ?? null) : null
+
                 return (
                   <Link
                     key={rec.id}
                     to={`/calibrations/${rec.id}`}
-                    className="flex items-center justify-between py-3 hover:bg-gray-50 -mx-5 px-5 transition-colors"
+                    className="flex items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 hover:bg-gray-50 transition-colors shadow-sm"
                   >
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {new Date(rec.performed_at).toLocaleDateString(undefined, {
-                          year: 'numeric', month: 'short', day: 'numeric',
-                        })}
+                    {/* Left: date + tech */}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900">
+                        {formatDateShort(rec.performed_at)}
                       </p>
+                      {techName && (
+                        <p className="mt-0.5 text-xs text-gray-500">{techName}</p>
+                      )}
                       {rec.sales_number && (
                         <p className="text-xs text-gray-400">SO: {rec.sales_number}</p>
                       )}
                     </div>
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusColors[rec.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {statusLabels[rec.status] ?? rec.status}
-                    </span>
+
+                    {/* Right: result badge + cert link */}
+                    <div className="flex flex-shrink-0 items-center gap-2">
+                      <ResultBadge result={result} />
+                      {rec.certificate_url && (
+                        <a
+                          href={rec.certificate_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                        >
+                          <ExternalLink size={12} />
+                          View Cert
+                        </a>
+                      )}
+                    </div>
                   </Link>
                 )
               })}
             </div>
           )}
         </div>
+
+        {/* Standards Used */}
+        {standards.length > 0 && (
+          <div className="rounded-2xl border border-gray-100 bg-white shadow-sm px-5 pb-5">
+            <div className="flex items-center gap-2 pt-5 pb-4">
+              <ShieldCheck size={16} className="text-gray-400" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400">
+                Standards Used
+              </h2>
+            </div>
+            <div className="space-y-3">
+              {standards.map((std) => {
+                const dueStatus = getStatus(std.due_at ?? undefined)
+                const dueClass =
+                  dueStatus === 'overdue'
+                    ? 'bg-red-100 text-red-600 border border-red-200'
+                    : 'bg-green-100 text-green-700 border border-green-200'
+                const dueLabel =
+                  dueStatus === 'overdue' ? 'Overdue' : `Due ${formatDateShort(std.due_at ?? undefined)}`
+
+                return (
+                  <div
+                    key={std.id}
+                    className="flex items-center justify-between gap-4 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        to={`/standards/${std.id}`}
+                        className="text-sm font-semibold text-brand-600 hover:underline"
+                      >
+                        {std.name}
+                      </Link>
+                      <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
+                        {std.serial_number && <span>S/N: {std.serial_number}</span>}
+                        {std.manufacturer && <span>{std.manufacturer}</span>}
+                      </div>
+                    </div>
+                    {std.due_at && (
+                      <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${dueClass}`}>
+                        {dueLabel}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

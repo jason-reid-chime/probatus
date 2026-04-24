@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './useAuth'
@@ -39,17 +39,6 @@ export function useCustomerFilter(): UseCustomerFilterReturn {
     staleTime: 1000 * 60 * 5,
   })
 
-  // If the persisted customer no longer exists in the fetched list, clear it
-  useEffect(() => {
-    if (
-      selectedCustomerId &&
-      customers.length > 0 &&
-      !customers.find((c) => c.id === selectedCustomerId)
-    ) {
-      setSelectedCustomerId(null)
-    }
-  }, [customers, selectedCustomerId])
-
   const setSelectedCustomerId = (id: string | null) => {
     setSelectedCustomerIdState(id)
     if (id) {
@@ -59,5 +48,11 @@ export function useCustomerFilter(): UseCustomerFilterReturn {
     }
   }
 
-  return { customers, selectedCustomerId, setSelectedCustomerId }
+  // If the persisted ID is no longer in the fetched list, treat it as unset
+  const validatedId =
+    selectedCustomerId && customers.length > 0
+      ? (customers.find((c) => c.id === selectedCustomerId) ? selectedCustomerId : null)
+      : selectedCustomerId
+
+  return { customers, selectedCustomerId: validatedId, setSelectedCustomerId }
 }

@@ -10,7 +10,7 @@ vi.mock('react-router-dom', async (orig) => ({
   useNavigate: () => mockNavigate,
 }))
 vi.mock('../../hooks/useAssets', () => ({ useAsset: vi.fn() }))
-vi.mock('../../hooks/useCalibration', () => ({ useCalibrationsByAsset: vi.fn().mockReturnValue({ data: [], isLoading: false }) }))
+vi.mock('../../hooks/useCalibration', () => ({ useCalibrationsByAsset: vi.fn() }))
 vi.mock('../../lib/supabase', () => ({
   supabase: {
     from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: [] }) }),
@@ -19,6 +19,7 @@ vi.mock('../../lib/supabase', () => ({
 }))
 
 import { useAsset } from '../../hooks/useAssets'
+import { useCalibrationsByAsset } from '../../hooks/useCalibration'
 import AssetDetail from './AssetDetail'
 
 const sampleAsset = {
@@ -43,8 +44,18 @@ function renderPage(id = 'a1') {
   )
 }
 
+const sampleCal = {
+  id: 'c1', asset_id: 'a1', tenant_id: 't1', technician_id: 'u1',
+  status: 'approved', performed_at: '2025-01-15T10:00:00Z',
+  sales_number: 'SO-100', flag_number: '', notes: '', local_id: '',
+  tech_signature: '', supervisor_signature: '',
+}
+
 describe('AssetDetail', () => {
-  beforeEach(() => mockNavigate.mockReset())
+  beforeEach(() => {
+    mockNavigate.mockReset()
+    vi.mocked(useCalibrationsByAsset).mockReturnValue({ data: [], isLoading: false } as never)
+  })
 
   it('shows loading spinner while fetching', () => {
     vi.mocked(useAsset).mockReturnValue({ data: undefined, isLoading: true, isError: false } as never)
@@ -75,5 +86,31 @@ describe('AssetDetail', () => {
     vi.mocked(useAsset).mockReturnValue({ data: sampleAsset, isLoading: false, isError: false } as never)
     renderPage()
     expect(screen.getByText('Pump Room')).toBeTruthy()
+  })
+
+  it('shows empty calibration history message when no calibrations', () => {
+    vi.mocked(useAsset).mockReturnValue({ data: sampleAsset, isLoading: false, isError: false } as never)
+    vi.mocked(useCalibrationsByAsset).mockReturnValue({ data: [], isLoading: false } as never)
+    renderPage()
+    expect(screen.getByText(/no calibration records yet/i)).toBeTruthy()
+  })
+
+  it('renders calibration history row with status badge', () => {
+    vi.mocked(useAsset).mockReturnValue({ data: sampleAsset, isLoading: false, isError: false } as never)
+    vi.mocked(useCalibrationsByAsset).mockReturnValue({ data: [sampleCal], isLoading: false } as never)
+    renderPage()
+    expect(screen.getByText(/approved/i)).toBeTruthy()
+  })
+
+  it('shows Start Calibration link for supervisor', () => {
+    vi.mocked(useAsset).mockReturnValue({ data: sampleAsset, isLoading: false, isError: false } as never)
+    renderPage()
+    expect(screen.getByRole('link', { name: /start calibration/i })).toBeTruthy()
+  })
+
+  it('shows notes when present', () => {
+    vi.mocked(useAsset).mockReturnValue({ data: sampleAsset, isLoading: false, isError: false } as never)
+    renderPage()
+    expect(screen.getByText('Handle with care')).toBeTruthy()
   })
 })

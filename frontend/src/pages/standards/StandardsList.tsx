@@ -132,7 +132,12 @@ export default function StandardsList() {
                   className={`border-t border-gray-100 ${isStandardExpired(s) ? 'bg-red-50' : isStandardDueSoon(s, 30) ? 'bg-amber-50' : ''}`}
                 >
                   <td className="px-4 py-3 font-medium text-gray-900">
-                    {s.name}
+                    <Link
+                      to={`/standards/${s.id}`}
+                      className="hover:text-brand-600 hover:underline transition-colors"
+                    >
+                      {s.name}
+                    </Link>
                     {s.manufacturer && (
                       <span className="block text-xs text-gray-500 font-normal">{s.manufacturer}</span>
                     )}

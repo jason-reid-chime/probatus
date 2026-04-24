@@ -15,6 +15,7 @@ import CalibrationForm from './pages/calibrations/CalibrationForm'
 import CalibrationDetail from './pages/calibrations/CalibrationDetail'
 import StandardsList from './pages/standards/StandardsList'
 import StandardForm from './pages/standards/StandardForm'
+import StandardDetail from './pages/standards/StandardDetail'
 import TemplateList from './pages/templates/TemplateList'
 import TemplateForm from './pages/templates/TemplateForm'
 import PortalDashboard from './pages/portal/PortalDashboard'
@@ -58,6 +59,7 @@ export default function App() {
               <Route path="calibrations/:recordId" element={<CalibrationDetail />} />
               <Route path="standards" element={<StandardsList />} />
               <Route path="standards/new" element={<StandardForm />} />
+              <Route path="standards/:id" element={<StandardDetail />} />
               <Route path="standards/:id/edit" element={<StandardForm />} />
               <Route path="templates" element={<TemplateList />} />
               <Route path="templates/new" element={<TemplateForm />} />
