@@ -95,11 +95,11 @@ describe('AssetDetail', () => {
     expect(screen.getByText(/no calibration records yet/i)).toBeTruthy()
   })
 
-  it('renders calibration history row with status badge', () => {
+  it('renders calibration history row with PASS badge for approved record', () => {
     vi.mocked(useAsset).mockReturnValue({ data: sampleAsset, isLoading: false, isError: false } as never)
     vi.mocked(useCalibrationsByAsset).mockReturnValue({ data: [sampleCal], isLoading: false } as never)
     renderPage()
-    expect(screen.getByText(/approved/i)).toBeTruthy()
+    expect(screen.getByText('PASS')).toBeTruthy()
   })
 
   it('shows Start Calibration link for supervisor', () => {
