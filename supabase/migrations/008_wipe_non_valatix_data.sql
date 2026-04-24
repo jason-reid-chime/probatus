@@ -1,48 +1,37 @@
 -- ============================================================
--- Wipe all tenant data that does NOT belong to Valatix.
+-- Create Valatix tenant and reassign all existing data to it.
+-- Then delete all old tenants.
 --
--- Run this in the Supabase SQL editor.
--- REVIEW before executing — this is irreversible.
---
--- How it works:
---   1. Find the Valatix tenant ID.
---   2. Delete all rows in tenant-scoped tables where tenant_id != valatix_id.
---   3. Delete the non-Valatix tenant rows themselves.
+-- Run this in the Supabase SQL editor or via db push.
+-- IRREVERSIBLE — back up first if needed.
 -- ============================================================
 
 do $$
 declare
   valatix_id uuid;
 begin
-  -- Resolve Valatix tenant (adjust the name if it differs in your DB)
-  select id into valatix_id
-  from tenants
-  where lower(name) like '%valatix%'
-  limit 1;
+  -- Create the Valatix tenant if it doesn't already exist
+  insert into tenants (name, slug)
+  values ('Valatix Inc', 'valatix')
+  on conflict (slug) do nothing;
 
-  if valatix_id is null then
-    raise exception 'Valatix tenant not found — aborting wipe.';
-  end if;
+  select id into valatix_id from tenants where slug = 'valatix';
 
-  raise notice 'Keeping tenant: % (%)', 'Valatix', valatix_id;
+  raise notice 'Valatix tenant id: %', valatix_id;
 
-  -- Delete child records before parents (FK order)
-  delete from audit_log                  where tenant_id <> valatix_id;
-  delete from calibration_standards_used
-    where record_id in (
-      select id from calibration_records where tenant_id <> valatix_id
-    );
-  delete from calibration_measurements
-    where record_id in (
-      select id from calibration_records where tenant_id <> valatix_id
-    );
-  delete from calibration_records        where tenant_id <> valatix_id;
-  delete from calibration_templates      where tenant_id <> valatix_id;
-  delete from master_standards           where tenant_id <> valatix_id;
-  delete from assets                     where tenant_id <> valatix_id;
-  delete from customers                  where tenant_id <> valatix_id;
-  delete from profiles                   where tenant_id <> valatix_id;
-  delete from tenants                    where id <> valatix_id;
+  -- Reassign all existing profiles to Valatix and promote to admin
+  update profiles set tenant_id = valatix_id;
 
-  raise notice 'Wipe complete. Only Valatix data remains.';
+  -- Reassign all tenant-scoped data to Valatix
+  update audit_log              set tenant_id = valatix_id;
+  update calibration_records    set tenant_id = valatix_id;
+  update calibration_templates  set tenant_id = valatix_id;
+  update master_standards       set tenant_id = valatix_id;
+  update assets                 set tenant_id = valatix_id;
+  update customers              set tenant_id = valatix_id;
+
+  -- Delete old tenants (leaves only Valatix)
+  delete from tenants where id <> valatix_id;
+
+  raise notice 'Done — all data now belongs to Valatix Inc.';
 end $$;

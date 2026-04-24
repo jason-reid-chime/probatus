@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
+import { useCustomerFilter } from '../../hooks/useCustomerFilter'
 import { supabase } from '../../lib/supabase'
 import { isOnline, toggleForcedOffline } from '../../lib/sync/connectivity'
 
@@ -73,6 +74,7 @@ const navItems: NavItem[] = [
 
 export default function Sidebar({ onClose }: SidebarProps) {
   const { profile, signOut, refreshProfile } = useAuth()
+  const { customers, selectedCustomerId, setSelectedCustomerId } = useCustomerFilter()
   const [online, setOnline] = useState(isOnline())
 
   useEffect(() => {
@@ -165,6 +167,31 @@ export default function Sidebar({ onClose }: SidebarProps) {
           </NavLink>
         ))}
       </nav>
+
+      {/* Client filter */}
+      {customers.length > 0 && (
+        <div className="border-t border-gray-100 px-4 py-4">
+          <label
+            htmlFor="sidebar-customer-filter"
+            className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-400"
+          >
+            Client
+          </label>
+          <select
+            id="sidebar-customer-filter"
+            value={selectedCustomerId ?? ''}
+            onChange={(e) => setSelectedCustomerId(e.target.value || null)}
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+          >
+            <option value="">All Clients</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* User footer */}
       <div className="border-t border-gray-100 px-4 py-4">

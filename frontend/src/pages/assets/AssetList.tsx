@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { QrCode, Plus, Search, X, ClipboardList } from 'lucide-react'
 import { useAssets } from '../../hooks/useAssets'
 import { useQrScanner } from '../../hooks/useQrScanner'
+import { useCustomerFilter } from '../../hooks/useCustomerFilter'
 import type { LocalAsset } from '../../lib/db'
 
 // ---------------------------------------------------------------------------
@@ -193,9 +194,11 @@ export default function AssetList() {
   const [searchParams, setSearchParams] = useSearchParams()
   const initialSearch = searchParams.get('tag') ?? ''
   const [search, setSearch] = useState(initialSearch)
+  const [serialSearch, setSerialSearch] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
 
   const { data: assets, isLoading, isError } = useAssets()
+  const { selectedCustomerId } = useCustomerFilter()
 
   const handleSearch = (value: string) => {
     setSearch(value)
@@ -215,13 +218,26 @@ export default function AssetList() {
   )
 
   const filtered = (assets ?? []).filter((a) => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return (
-      a.tag_id.toLowerCase().includes(q) ||
-      (a.manufacturer ?? '').toLowerCase().includes(q) ||
-      (a.model ?? '').toLowerCase().includes(q)
-    )
+    // Customer filter
+    if (selectedCustomerId && a.customer_id !== selectedCustomerId) return false
+
+    // Tag / make / model search (existing)
+    if (search) {
+      const q = search.toLowerCase()
+      const matchesTag =
+        a.tag_id.toLowerCase().includes(q) ||
+        (a.manufacturer ?? '').toLowerCase().includes(q) ||
+        (a.model ?? '').toLowerCase().includes(q)
+      if (!matchesTag) return false
+    }
+
+    // Serial number search (Task 8)
+    if (serialSearch) {
+      const sq = serialSearch.toLowerCase()
+      if (!(a.serial_number ?? '').toLowerCase().includes(sq)) return false
+    }
+
+    return true
   })
 
   return (
@@ -251,8 +267,8 @@ export default function AssetList() {
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
-        {/* Search */}
-        <div className="relative mb-6">
+        {/* Search by tag / make / model */}
+        <div className="relative mb-3">
           <Search
             size={18}
             className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
@@ -269,6 +285,30 @@ export default function AssetList() {
               onClick={() => handleSearch('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:text-gray-600"
               aria-label="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+
+        {/* Search by serial number (Task 8) */}
+        <div className="relative mb-6">
+          <Search
+            size={18}
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
+          />
+          <input
+            type="search"
+            placeholder="Search by serial number…"
+            value={serialSearch}
+            onChange={(e) => setSerialSearch(e.target.value)}
+            className="h-12 w-full rounded-xl border border-gray-200 bg-white pl-11 pr-4 text-base text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+          />
+          {serialSearch && (
+            <button
+              onClick={() => setSerialSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:text-gray-600"
+              aria-label="Clear serial number search"
             >
               <X size={16} />
             </button>
@@ -305,14 +345,16 @@ export default function AssetList() {
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
             <ClipboardList size={48} className="mb-4 text-gray-300" />
             <h2 className="mb-1 text-xl font-semibold text-gray-700">
-              {search ? 'No assets match your search' : 'No assets yet'}
+              {search || serialSearch || selectedCustomerId
+                ? 'No assets match your filters'
+                : 'No assets yet'}
             </h2>
             <p className="mb-6 text-base text-gray-500">
-              {search
-                ? 'Try a different tag ID, manufacturer, or model name.'
+              {search || serialSearch || selectedCustomerId
+                ? 'Try adjusting your search or client filter.'
                 : 'Add your first asset to start tracking calibrations.'}
             </p>
-            {!search && (
+            {!search && !serialSearch && !selectedCustomerId && (
               <Link
                 to="/assets/new"
                 className="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-6 text-base font-medium text-white hover:bg-brand-700 active:opacity-80"

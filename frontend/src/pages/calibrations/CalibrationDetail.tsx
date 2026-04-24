@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Upload, Send } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Upload, Send, Trash2, Pencil, Loader2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
 import { API_URL } from '../../lib/api/client'
@@ -175,6 +175,28 @@ interface StandardSummary {
   due_at: string
 }
 
+// ---------------------------------------------------------------------------
+// Customer name derived from asset.customer_id
+// ---------------------------------------------------------------------------
+function useAssetCustomer(assetId: string) {
+  const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null)
+
+  useEffect(() => {
+    if (!assetId) return
+    db.assets.get(assetId).then(async (asset) => {
+      if (!asset?.customer_id) { setCustomer(null); return }
+      const { data } = await supabase
+        .from('customers')
+        .select('id, name')
+        .eq('id', asset.customer_id)
+        .single()
+      setCustomer(data as { id: string; name: string } | null)
+    })
+  }, [assetId])
+
+  return customer
+}
+
 function useStandardsUsed(recordId: string) {
   const [standards, setStandards] = useState<StandardSummary[]>([])
 
@@ -232,7 +254,18 @@ export default function CalibrationDetail() {
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailSent, setEmailSent] = useState(false)
 
+  // Delete calibration
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  // Inline cert URL edit
+  const [editingCertUrl, setEditingCertUrl] = useState(false)
+  const [certUrlDraft, setCertUrlDraft] = useState('')
+  const [savingCertUrl, setSavingCertUrl] = useState(false)
+
   const standardsUsed = useStandardsUsed(recordId ?? '')
+  const customer = useAssetCustomer(record?.asset_id ?? '')
 
   const result = useMemo(() => {
     if (!record) return 'INCOMPLETE' as const
@@ -300,10 +333,47 @@ export default function CalibrationDetail() {
     )
   }
 
+  async function handleDelete() {
+    if (!recordId) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await supabase.from('calibration_standards_used').delete().eq('record_id', recordId)
+      await supabase.from('calibration_measurements').delete().eq('record_id', recordId)
+      const { error } = await supabase.from('calibration_records').delete().eq('id', recordId)
+      if (error) throw error
+      await db.measurements.where('record_id').equals(recordId).delete()
+      await db.calibration_records.delete(recordId)
+      navigate('/calibrations')
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete')
+      setDeleting(false)
+    }
+  }
+
+  async function handleSaveCertUrl() {
+    if (!record) return
+    setSavingCertUrl(true)
+    try {
+      const url = certUrlDraft.trim() || null
+      await supabase.from('calibration_records').update({ certificate_url: url }).eq('id', record.id)
+      const updated = { ...record, certificate_url: url ?? undefined }
+      await db.calibration_records.put(updated as typeof record)
+      queryClient.setQueryData(calibrationKeys.detail(record.id), updated)
+      setEditingCertUrl(false)
+    } catch (err) {
+      console.error('Failed to save cert URL', err)
+    } finally {
+      setSavingCertUrl(false)
+    }
+  }
+
   const performedAt = new Date(record.performed_at).toLocaleString()
   const canSubmit = record.status === 'in_progress'
   const canApprove = record.status === 'pending_approval' && (profile?.role === 'supervisor' || profile?.role === 'admin')
   const canGeneratePdf = record.status === 'approved'
+  const canDelete = profile?.role === 'supervisor' || profile?.role === 'admin'
+  const canEditCertUrl = profile?.role === 'supervisor' || profile?.role === 'admin'
 
   async function handleApprove() {
     if (!recordId || !profile) return
@@ -432,14 +502,25 @@ export default function CalibrationDetail() {
             Calibration Record
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">{performedAt}</p>
-          <button
-            type="button"
-            onClick={() => navigate(`/assets/${record.asset_id}`)}
-            className="mt-1 inline-flex items-center gap-1 text-sm text-brand-600 hover:text-brand-700 hover:underline"
-          >
-            <ExternalLink size={13} />
-            View Asset
-          </button>
+          <div className="mt-1 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => navigate(`/assets/${record.asset_id}`)}
+              className="inline-flex items-center gap-1 text-sm text-brand-600 hover:text-brand-700 hover:underline"
+            >
+              <ExternalLink size={13} />
+              View Asset
+            </button>
+            {customer && (
+              <button
+                type="button"
+                onClick={() => navigate(`/customers/${customer.id}/edit`)}
+                className="inline-flex items-center gap-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-full hover:bg-blue-100 transition-colors"
+              >
+                {customer.name}
+              </button>
+            )}
+          </div>
         </div>
         <StatusBadge status={record.status} />
       </div>
@@ -610,8 +691,50 @@ export default function CalibrationDetail() {
 
       {/* External certificate upload / view */}
       <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
-        <h2 className="text-base font-semibold text-gray-800">External Certificate</h2>
-        {record.certificate_url ? (
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold text-gray-800">External Certificate</h2>
+          {canEditCertUrl && !editingCertUrl && (
+            <button
+              type="button"
+              onClick={() => { setCertUrlDraft(record.certificate_url ?? ''); setEditingCertUrl(true) }}
+              className="p-1.5 text-gray-400 hover:text-brand-500 rounded-lg transition-colors"
+              aria-label="Edit certificate URL"
+            >
+              <Pencil size={15} />
+            </button>
+          )}
+        </div>
+
+        {editingCertUrl ? (
+          <div className="space-y-2">
+            <input
+              type="url"
+              value={certUrlDraft}
+              onChange={(e) => setCertUrlDraft(e.target.value)}
+              placeholder="https://example.com/certificate.pdf"
+              className="w-full text-sm px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleSaveCertUrl}
+                disabled={savingCertUrl}
+                className="inline-flex items-center gap-1.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-60 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+              >
+                {savingCertUrl ? <Loader2 size={14} className="animate-spin" /> : null}
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingCertUrl(false)}
+                className="text-sm font-medium text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : record.certificate_url ? (
           <div className="space-y-3">
             <embed
               src={record.certificate_url}
@@ -650,6 +773,54 @@ export default function CalibrationDetail() {
           </div>
         )}
       </div>
+
+      {/* Delete calibration */}
+      {canDelete && (
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => { setDeleteError(null); setShowDeleteModal(true) }}
+            className="w-full inline-flex items-center justify-center gap-2 border border-red-200 text-red-600 hover:bg-red-50 font-semibold text-sm rounded-xl min-h-[48px] px-6 py-3 transition-colors"
+          >
+            <Trash2 size={16} />
+            Delete Calibration
+          </button>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl p-6 space-y-4">
+            <h2 className="text-lg font-bold text-gray-900">Delete Calibration?</h2>
+            <p className="text-sm text-gray-600">
+              This will permanently delete the calibration record, all measurements, and linked standards. <strong>This cannot be undone.</strong>
+            </p>
+            {deleteError && (
+              <p className="text-sm text-red-600">{deleteError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                className="flex-1 border border-gray-300 text-gray-700 font-semibold py-2.5 rounded-xl hover:bg-gray-50 disabled:opacity-60 transition-colors text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
+              >
+                {deleting ? <Loader2 size={14} className="animate-spin" /> : null}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

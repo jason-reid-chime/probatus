@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Building2, Pencil } from 'lucide-react'
+import { Plus, Building2, Pencil, Trash2, Loader2 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 
@@ -20,6 +20,11 @@ export default function CustomersList() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Delete modal state
+  const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!profile?.tenant_id) return
     supabase
@@ -36,6 +41,52 @@ export default function CustomersList() {
         setLoading(false)
       })
   }, [profile?.tenant_id])
+
+  function openDeleteModal(customer: Customer) {
+    setDeletingCustomer(customer)
+    setDeleteError(null)
+  }
+
+  function closeDeleteModal() {
+    if (deleteLoading) return
+    setDeletingCustomer(null)
+    setDeleteError(null)
+  }
+
+  async function handleConfirmDelete() {
+    if (!deletingCustomer) return
+    setDeleteLoading(true)
+    setDeleteError(null)
+
+    // Step 1: unlink assets
+    const { error: unlinkErr } = await supabase
+      .from('assets')
+      .update({ customer_id: null })
+      .eq('customer_id', deletingCustomer.id)
+
+    if (unlinkErr) {
+      setDeleteError(unlinkErr.message)
+      setDeleteLoading(false)
+      return
+    }
+
+    // Step 2: delete the customer
+    const { error: deleteErr } = await supabase
+      .from('customers')
+      .delete()
+      .eq('id', deletingCustomer.id)
+
+    if (deleteErr) {
+      setDeleteError(deleteErr.message)
+      setDeleteLoading(false)
+      return
+    }
+
+    // Remove from local state and close
+    setCustomers((prev) => prev.filter((c) => c.id !== deletingCustomer.id))
+    setDeleteLoading(false)
+    setDeletingCustomer(null)
+  }
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
@@ -119,7 +170,7 @@ export default function CustomersList() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-end">
+                      <div className="flex items-center justify-end gap-1">
                         <Link
                           to={`/customers/${c.id}/edit`}
                           className="p-2 text-gray-400 hover:text-brand-500 rounded-lg transition-colors"
@@ -127,6 +178,14 @@ export default function CustomersList() {
                         >
                           <Pencil size={16} />
                         </Link>
+                        <button
+                          type="button"
+                          onClick={() => openDeleteModal(c)}
+                          className="p-2 text-gray-400 hover:text-red-500 rounded-lg transition-colors"
+                          aria-label={`Delete ${c.name}`}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -134,6 +193,52 @@ export default function CustomersList() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deletingCustomer && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-modal-title"
+        >
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-xl p-6 space-y-4">
+            <h2 id="delete-modal-title" className="text-lg font-bold text-gray-900">
+              Delete Customer?
+            </h2>
+            <p className="text-sm text-gray-600">
+              Deleting <strong>{deletingCustomer.name}</strong> will unlink all their assets (assets
+              will not be deleted). This cannot be undone.
+            </p>
+
+            {deleteError && (
+              <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                disabled={deleteLoading}
+                className="px-4 py-2 text-sm font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deleteLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {deleteLoading && <Loader2 size={14} className="animate-spin" />}
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

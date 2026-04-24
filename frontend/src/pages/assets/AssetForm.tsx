@@ -8,6 +8,7 @@ import { useAsset, useUpsertAsset, useAssets } from '../../hooks/useAssets'
 import { useQrScanner } from '../../hooks/useQrScanner'
 import { useAuth } from '../../hooks/useAuth'
 import { INSTRUMENT_DEFAULTS } from '../../lib/assets/instrumentDefaults'
+import { supabase } from '../../lib/supabase'
 
 // ---------------------------------------------------------------------------
 // Zod schema
@@ -163,6 +164,12 @@ export default function AssetForm() {
   const [tagDuplicateWarning, setTagDuplicateWarning] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
 
+  // Customer linking
+  const [customers, setCustomers] = useState<{ id: string; name: string }[]>([])
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(
+    existingAsset?.customer_id ?? null,
+  )
+
   const {
     register,
     handleSubmit,
@@ -179,6 +186,26 @@ export default function AssetForm() {
       calibration_interval_days: 365,
     },
   })
+
+  // Fetch customers for the tenant
+  useEffect(() => {
+    if (!tenantId) return
+    supabase
+      .from('customers')
+      .select('id, name')
+      .eq('tenant_id', tenantId)
+      .order('name')
+      .then(({ data }) => {
+        if (data) setCustomers(data as { id: string; name: string }[])
+      })
+  }, [tenantId])
+
+  // Sync selectedCustomerId when existing asset loads
+  useEffect(() => {
+    if (existingAsset) {
+      setSelectedCustomerId(existingAsset.customer_id ?? null)
+    }
+  }, [existingAsset])
 
   // Populate form when editing
   useEffect(() => {
@@ -239,7 +266,7 @@ export default function AssetForm() {
       const saved = await upsertAsset({
         id: assetId,
         tenant_id: tenantId,
-        customer_id: existingAsset?.customer_id,
+        customer_id: selectedCustomerId ?? undefined,
         tag_id: values.tag_id,
         serial_number: values.serial_number || undefined,
         manufacturer: values.manufacturer || undefined,
@@ -480,6 +507,30 @@ export default function AssetForm() {
                 placeholder="Any additional notes…"
               />
               <FieldError message={errors.notes?.message} />
+            </div>
+          </section>
+
+          {/* ---- Client ---- */}
+          <section className="rounded-2xl border border-gray-100 bg-white px-5 pb-5 shadow-sm">
+            <h2 className="pt-5 pb-4 text-sm font-semibold uppercase tracking-wide text-gray-400">
+              Client
+            </h2>
+
+            <div>
+              <Label htmlFor="customer_id">Customer</Label>
+              <select
+                id="customer_id"
+                value={selectedCustomerId ?? ''}
+                onChange={(e) => setSelectedCustomerId(e.target.value || null)}
+                className={`mt-1.5 ${selectClass}`}
+              >
+                <option value="">— No customer —</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
           </section>
 

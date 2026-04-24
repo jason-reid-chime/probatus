@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CheckCircle, XCircle, Clock, ChevronRight } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, ChevronRight, Search, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { db } from '../../lib/db'
 import { isOnline } from '../../lib/sync/connectivity'
 import type { LocalCalibrationRecord, LocalMeasurement } from '../../lib/db'
 import { useAuth } from '../../hooks/useAuth'
 import { overallResult } from '../../utils/calibrationMath'
+import { useCustomerFilter } from '../../hooks/useCustomerFilter'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -20,6 +21,8 @@ type StatusFilter =
 
 interface EnrichedRecord extends LocalCalibrationRecord {
   tagId: string
+  serialNumber: string | null
+  assetCustomerId: string | null
   measurements: LocalMeasurement[]
 }
 
@@ -112,6 +115,8 @@ function useCalibrationList(tenantId: string) {
           return {
             ...r,
             tagId: asset?.tag_id ?? r.asset_id,
+            serialNumber: asset?.serial_number ?? null,
+            assetCustomerId: asset?.customer_id ?? null,
             measurements,
           }
         }),
@@ -133,13 +138,24 @@ export default function CalibrationList() {
   const tenantId = profile?.tenant_id ?? ''
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [search, setSearch] = useState('')
+  const { selectedCustomerId } = useCustomerFilter()
 
   const { data: records = [], isLoading, isError } = useCalibrationList(tenantId)
 
   const filtered = useMemo(() => {
-    if (statusFilter === 'all') return records
-    return records.filter((r) => r.status === statusFilter)
-  }, [records, statusFilter])
+    return records.filter((r) => {
+      if (statusFilter !== 'all' && r.status !== statusFilter) return false
+      if (selectedCustomerId && r.assetCustomerId !== selectedCustomerId) return false
+      if (search) {
+        const q = search.toLowerCase()
+        const matchesTag = r.tagId.toLowerCase().includes(q)
+        const matchesSerial = (r.serialNumber ?? '').toLowerCase().includes(q)
+        if (!matchesTag && !matchesSerial) return false
+      }
+      return true
+    })
+  }, [records, statusFilter, selectedCustomerId, search])
 
   const filterOptions: { value: StatusFilter; label: string }[] = [
     { value: 'all', label: 'All' },
@@ -153,6 +169,27 @@ export default function CalibrationList() {
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
       <div className="flex items-center justify-between gap-4">
         <h1 className="text-xl font-bold text-gray-900">Calibrations</h1>
+      </div>
+
+      {/* Search */}
+      <div className="relative">
+        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input
+          type="search"
+          placeholder="Search by tag ID or serial number…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-11 w-full rounded-xl border border-gray-200 bg-white pl-10 pr-4 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            aria-label="Clear search"
+          >
+            <X size={15} />
+          </button>
+        )}
       </div>
 
       {/* Status filter pills */}

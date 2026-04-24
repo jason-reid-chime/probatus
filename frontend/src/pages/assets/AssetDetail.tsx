@@ -1,4 +1,5 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import {
   ArrowLeft,
   Edit2,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
+import { supabase } from '../../lib/supabase'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,6 +92,23 @@ export default function AssetDetail() {
   const navigate = useNavigate()
   const { data: asset, isLoading, isError } = useAsset(id ?? '')
   const { data: calibrations = [] } = useCalibrationsByAsset(id ?? '')
+
+  const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null)
+
+  useEffect(() => {
+    if (!asset?.customer_id) {
+      setCustomer(null)
+      return
+    }
+    supabase
+      .from('customers')
+      .select('id, name')
+      .eq('id', asset.customer_id)
+      .single()
+      .then(({ data }) => {
+        setCustomer(data as { id: string; name: string } | null)
+      })
+  }, [asset?.customer_id])
 
   if (isLoading) {
     return (
@@ -167,6 +186,16 @@ export default function AssetDetail() {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 space-y-6">
+        {/* Customer badge */}
+        {customer && (
+          <Link
+            to={`/customers/${customer.id}/edit`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors"
+          >
+            {customer.name}
+          </Link>
+        )}
+
         {/* Status banner */}
         <div className={`flex items-center justify-between rounded-2xl border px-5 py-4 ${statusClass}`}>
           <div>

@@ -10,6 +10,9 @@ vi.mock('react-router-dom', async (orig) => ({
   useNavigate: () => mockNavigate,
 }))
 vi.mock('../../hooks/useAssets', () => ({ useAssets: vi.fn() }))
+vi.mock('../../hooks/useCustomerFilter', () => ({
+  useCustomerFilter: vi.fn().mockReturnValue({ customers: [], selectedCustomerId: null, setSelectedCustomerId: vi.fn() }),
+}))
 vi.mock('../../hooks/useQrScanner', () => ({
   useQrScanner: vi.fn().mockReturnValue({
     scannerRef: { current: null },

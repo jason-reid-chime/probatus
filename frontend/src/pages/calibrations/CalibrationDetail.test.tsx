@@ -12,7 +12,9 @@ vi.mock('../../hooks/useCalibration', () => ({
 vi.mock('../../lib/db', () => ({
   db: {
     outbox:               { filter: vi.fn().mockReturnValue({ count: vi.fn().mockResolvedValue(0) }) },
-    calibration_records:  { put: vi.fn(), update: vi.fn() },
+    calibration_records:  { put: vi.fn(), update: vi.fn(), delete: vi.fn().mockResolvedValue(undefined) },
+    assets:               { get: vi.fn().mockResolvedValue(null) },
+    measurements:         { where: vi.fn().mockReturnValue({ equals: vi.fn().mockReturnValue({ delete: vi.fn().mockResolvedValue(undefined) }) }) },
   },
 }))
 vi.mock('../../lib/sync/outbox', () => ({ enqueue: vi.fn().mockResolvedValue(undefined) }))

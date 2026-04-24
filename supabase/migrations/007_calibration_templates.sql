@@ -3,7 +3,7 @@
 -- Reusable measurement point sets per instrument type
 -- ============================================================
 
-create table calibration_templates (
+create table if not exists calibration_templates (
   id              uuid primary key default gen_random_uuid(),
   tenant_id       uuid not null references tenants(id) on delete cascade,
   name            text not null,
@@ -17,7 +17,10 @@ create table calibration_templates (
 
 alter table calibration_templates enable row level security;
 
-create policy "tenant_isolation" on calibration_templates
-  for all using (tenant_id = current_tenant_id());
+do $$ begin
+  create policy "tenant_isolation" on calibration_templates
+    for all using (tenant_id = current_tenant_id());
+exception when duplicate_object then null;
+end $$;
 
-create index on calibration_templates (tenant_id, instrument_type);
+create index if not exists calibration_templates_tenant_type_idx on calibration_templates (tenant_id, instrument_type);

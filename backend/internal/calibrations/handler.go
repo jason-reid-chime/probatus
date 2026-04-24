@@ -655,6 +655,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		recordID:       recordID,
 		localID:        rec.localID,
 		tenantName:     tenantName,
+		customerName:   customerName,
 		salesNumber:    rec.salesNumber,
 		flagNumber:     rec.flagNumber,
 		performedAt:    rec.performedAt,
@@ -932,6 +933,9 @@ func buildCertTextLines(p buildCertHTMLParams) []string {
 	if p.rangeMin != nil && p.rangeMax != nil {
 		add(fmt.Sprintf("  Range           : %.4g - %.4g %s", *p.rangeMin, *p.rangeMax, p.rangeUnit))
 	}
+	if p.customerName != "" {
+		add(fmt.Sprintf("  Client          : %s", p.customerName))
+	}
 	sep()
 
 	add("CALIBRATION MEASUREMENTS")
@@ -1007,6 +1011,7 @@ type buildCertHTMLParams struct {
 	recordID       string
 	localID        string
 	tenantName     string
+	customerName   string
 	salesNumber    string
 	flagNumber     string
 	performedAt    time.Time
@@ -1126,6 +1131,9 @@ func buildCertHTML(p buildCertHTMLParams) string {
 	if p.rangeMin != nil && p.rangeMax != nil {
 		fmt.Fprintf(&sb, `<div class="kv-item"><span class="kv-label">Range:</span> %.4g &ndash; %.4g %s</div>`,
 			derefF(p.rangeMin), derefF(p.rangeMax), p.rangeUnit)
+	}
+	if p.customerName != "" {
+		fmt.Fprintf(&sb, "<div class=\"kv-item\"><span class=\"kv-label\">Client:</span> %s</div>", p.customerName)
 	}
 
 	sb.WriteString(`</div></div>
