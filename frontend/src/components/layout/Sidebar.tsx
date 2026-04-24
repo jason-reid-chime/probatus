@@ -11,6 +11,8 @@ import {
   Wifi,
   WifiOff,
   Building2,
+  CalendarDays,
+  Briefcase,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
@@ -43,9 +45,11 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', Icon: LayoutDashboard },
+  { to: '/calendar', label: 'Calendar', Icon: CalendarDays },
   { to: '/assets', label: 'Assets', Icon: Wrench },
   { to: '/calibrations', label: 'Calibrations', Icon: ClipboardList },
   { to: '/customers', label: 'Customers', Icon: Building2 },
+  { to: '/work-orders', label: 'Work Orders', Icon: Briefcase },
   {
     to: '/approvals',
     label: 'Approvals',

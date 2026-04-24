@@ -8,12 +8,15 @@ export interface PressureRow {
   standardValue: number
   asFound: string
   asLeft: string
+  uncertainty_pct?: string
+  confidence_level?: string
 }
 
 interface PressureTemplateProps {
   asset: LocalAsset
   rows: PressureRow[]
   onChange: (rows: PressureRow[]) => void
+  showUncertainty?: boolean
 }
 
 const POINTS = [0, 25, 50, 75, 100]
@@ -42,12 +45,13 @@ export default function PressureTemplate({
   asset,
   rows,
   onChange,
+  showUncertainty = false,
 }: PressureTemplateProps) {
   const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
 
   function handleChange(
     index: number,
-    field: 'asFound' | 'asLeft',
+    field: 'asFound' | 'asLeft' | 'uncertainty_pct' | 'confidence_level',
     value: string,
   ) {
     const updated = rows.map((row, i) =>
@@ -79,6 +83,16 @@ export default function PressureTemplate({
             <th className="px-3 py-2 font-semibold text-gray-700 whitespace-nowrap text-center">
               Pass/Fail
             </th>
+            {showUncertainty && (
+              <th className="px-3 py-2 font-semibold text-gray-700 whitespace-nowrap">
+                Uncertainty %
+              </th>
+            )}
+            {showUncertainty && (
+              <th className="px-3 py-2 font-semibold text-gray-700 whitespace-nowrap">
+                Confidence
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -138,6 +152,33 @@ export default function PressureTemplate({
                     <span className="text-gray-400">—</span>
                   )}
                 </td>
+                {showUncertainty && (
+                  <td className="px-3 py-1">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      value={row.uncertainty_pct ?? ''}
+                      onChange={(e) => handleChange(i, 'uncertainty_pct', e.target.value)}
+                      placeholder="—"
+                      className="w-24 text-sm px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                    />
+                  </td>
+                )}
+                {showUncertainty && (
+                  <td className="px-3 py-1">
+                    <select
+                      value={row.confidence_level ?? ''}
+                      onChange={(e) => handleChange(i, 'confidence_level', e.target.value)}
+                      className="text-sm px-2 py-1.5 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent"
+                    >
+                      <option value="">—</option>
+                      <option value="95">95%</option>
+                      <option value="99">99%</option>
+                    </select>
+                  </td>
+                )}
               </tr>
             )
           })}

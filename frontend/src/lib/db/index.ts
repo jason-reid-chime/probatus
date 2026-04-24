@@ -53,6 +53,8 @@ export interface LocalMeasurement {
   pass?: boolean
   error_pct?: number
   notes?: string
+  uncertainty_pct?: number | null
+  confidence_level?: string | null
 }
 
 // -------------------------------------------------------

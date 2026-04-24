@@ -24,6 +24,10 @@ import AuditPackage from './pages/AuditPackage'
 import ApprovalDashboard from './pages/approvals/ApprovalDashboard'
 import CustomersList from './pages/customers/CustomersList'
 import CustomerForm from './pages/customers/CustomerForm'
+import CalendarView from './pages/calendar/CalendarView'
+import WorkOrdersList from './pages/work-orders/WorkOrdersList'
+import WorkOrderForm from './pages/work-orders/WorkOrderForm'
+import WorkOrderDetail from './pages/work-orders/WorkOrderDetail'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -69,6 +73,11 @@ export default function App() {
               <Route path="customers" element={<CustomersList />} />
               <Route path="customers/new" element={<CustomerForm />} />
               <Route path="customers/:id/edit" element={<CustomerForm />} />
+              <Route path="calendar" element={<CalendarView />} />
+              <Route path="work-orders" element={<WorkOrdersList />} />
+              <Route path="work-orders/new" element={<WorkOrderForm />} />
+              <Route path="work-orders/:id" element={<WorkOrderDetail />} />
+              <Route path="work-orders/:id/edit" element={<WorkOrderForm />} />
             </Route>
           </Routes>
           </BrowserRouter>

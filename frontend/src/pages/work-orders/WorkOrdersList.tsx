@@ -1,0 +1,161 @@
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Briefcase, Plus } from 'lucide-react'
+import { useWorkOrders, type WorkOrder } from '../../hooks/useWorkOrders'
+import { useAuth } from '../../hooks/useAuth'
+
+type StatusFilter = 'all' | 'open' | 'in_progress' | 'completed' | 'cancelled'
+
+const STATUS_PILLS: { value: StatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'open', label: 'Open' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
+const STATUS_BADGE: Record<string, string> = {
+  open: 'bg-blue-100 text-blue-700 border border-blue-200',
+  in_progress: 'bg-yellow-100 text-yellow-700 border border-yellow-200',
+  completed: 'bg-green-100 text-green-700 border border-green-200',
+  cancelled: 'bg-gray-100 text-gray-500 border border-gray-200',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  open: 'Open',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+}
+
+function SkeletonRow() {
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-gray-100 bg-white px-4 py-4 shadow-sm animate-pulse">
+      <div className="flex-1 space-y-2">
+        <div className="h-4 w-48 rounded bg-gray-200" />
+        <div className="h-3 w-32 rounded bg-gray-100" />
+      </div>
+      <div className="h-6 w-20 rounded-full bg-gray-200" />
+      <div className="h-4 w-16 rounded bg-gray-100" />
+    </div>
+  )
+}
+
+function WorkOrderRow({ wo }: { wo: WorkOrder }) {
+  const navigate = useNavigate()
+  const assetCount = wo.work_order_assets?.[0]?.count ?? 0
+
+  return (
+    <button
+      className="flex w-full items-center gap-4 rounded-xl border border-gray-100 bg-white px-4 py-4 shadow-sm transition-colors hover:bg-gray-50 active:bg-gray-100 text-left"
+      onClick={() => navigate(`/work-orders/${wo.id}`)}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-base font-medium text-gray-900">{wo.title}</p>
+        <p className="mt-0.5 text-sm text-gray-500">
+          {wo.scheduled_date
+            ? new Date(wo.scheduled_date + 'T00:00:00').toLocaleDateString()
+            : '—'}
+          {wo.customer?.name ? ` · ${wo.customer.name}` : ''}
+        </p>
+      </div>
+      <span
+        className={`inline-flex items-center rounded-full px-3 py-0.5 text-sm font-medium ${STATUS_BADGE[wo.status] ?? STATUS_BADGE.open}`}
+      >
+        {STATUS_LABEL[wo.status] ?? wo.status}
+      </span>
+      <span className="hidden sm:block flex-shrink-0 text-sm text-gray-500">
+        {assetCount} asset{assetCount !== 1 ? 's' : ''}
+      </span>
+    </button>
+  )
+}
+
+export default function WorkOrdersList() {
+  const { profile } = useAuth()
+  const { data: workOrders, isLoading } = useWorkOrders()
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+
+  const canCreate = profile?.role === 'supervisor' || profile?.role === 'admin'
+
+  const filtered = (workOrders ?? []).filter(
+    (wo) => statusFilter === 'all' || wo.status === statusFilter,
+  )
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="sticky top-0 z-10 border-b border-gray-200 bg-white px-4 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4">
+          <h1 className="text-2xl font-bold text-gray-900">Work Orders</h1>
+          {canCreate && (
+            <Link
+              to="/work-orders/new"
+              className="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-4 text-base font-medium text-white shadow-sm hover:bg-brand-700 active:opacity-80"
+            >
+              <Plus size={20} />
+              <span className="hidden sm:inline">New Work Order</span>
+            </Link>
+          )}
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
+        <div className="mb-6 flex flex-wrap gap-2">
+          {STATUS_PILLS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setStatusFilter(value)}
+              className={[
+                'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                statusFilter === value
+                  ? 'bg-brand-500 text-white'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {isLoading && (
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <SkeletonRow key={i} />
+            ))}
+          </div>
+        )}
+
+        {!isLoading && filtered.length > 0 && (
+          <div className="space-y-3">
+            {filtered.map((wo) => (
+              <WorkOrderRow key={wo.id} wo={wo} />
+            ))}
+          </div>
+        )}
+
+        {!isLoading && workOrders !== undefined && filtered.length === 0 && (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
+            <Briefcase size={48} className="mb-4 text-gray-300" />
+            <h2 className="mb-1 text-xl font-semibold text-gray-700">
+              {statusFilter !== 'all' ? 'No work orders match this filter' : 'No work orders yet'}
+            </h2>
+            <p className="mb-6 text-base text-gray-500">
+              {statusFilter !== 'all'
+                ? 'Try selecting a different status.'
+                : 'Create your first work order to get started.'}
+            </p>
+            {canCreate && statusFilter === 'all' && (
+              <Link
+                to="/work-orders/new"
+                className="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-6 text-base font-medium text-white hover:bg-brand-700 active:opacity-80"
+              >
+                <Plus size={20} />
+                New Work Order
+              </Link>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}

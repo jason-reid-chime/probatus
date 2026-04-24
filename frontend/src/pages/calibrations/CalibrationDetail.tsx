@@ -8,7 +8,7 @@ import { API_URL } from '../../lib/api/client'
 import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
 import { enqueue } from '../../lib/sync/outbox'
-import { overallResult } from '../../utils/calibrationMath'
+import { overallResult, computeCombinedUncertainty } from '../../utils/calibrationMath'
 import type { LocalMeasurement } from '../../lib/db'
 
 // ---------------------------------------------------------------------------
@@ -141,6 +141,29 @@ function MeasurementsTable({
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Combined expanded uncertainty row (ISO 17025)
+// ---------------------------------------------------------------------------
+function CombinedUncertaintyRow({
+  measurements,
+  record,
+}: {
+  measurements: LocalMeasurement[]
+  record: LocalCalibrationRecord
+}) {
+  const coverageFactor = (record as unknown as { coverage_factor?: number }).coverage_factor ?? 2
+  const U = computeCombinedUncertainty(measurements, coverageFactor)
+  if (U === null) return null
+
+  return (
+    <div className="mt-2 pt-3 border-t border-gray-200 text-sm text-gray-700">
+      <span className="font-semibold">Combined Expanded Uncertainty:</span>{' '}
+      <span className="font-mono">U = {U.toFixed(2)}%</span>{' '}
+      <span className="text-gray-500">(k={coverageFactor}, 95% confidence)</span>
     </div>
   )
 }
@@ -573,6 +596,7 @@ export default function CalibrationDetail() {
       <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
         <h2 className="text-base font-semibold text-gray-800">Measurements</h2>
         <MeasurementsTable measurements={measurements} />
+        <CombinedUncertaintyRow measurements={measurements} record={record} />
       </div>
 
       {/* Standards used */}

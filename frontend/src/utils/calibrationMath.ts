@@ -2,6 +2,25 @@ import type { LocalMeasurement } from '../lib/db'
 
 const DEFAULT_TOLERANCE = 1.0
 
+export function computeCombinedUncertainty(
+  measurements: Array<{ uncertainty_pct?: number | null }>,
+  coverageFactor = 2,
+): number | null {
+  const components = measurements
+    .map((m) => m.uncertainty_pct)
+    .filter((u): u is number => u != null && isFinite(u))
+
+  if (components.length === 0) return null
+
+  const sumOfSquares = components.reduce((acc, u) => {
+    const ui = (u / 100) / Math.sqrt(3)
+    return acc + ui * ui
+  }, 0)
+
+  const uc = Math.sqrt(sumOfSquares)
+  return coverageFactor * uc * 100
+}
+
 /**
  * Standard error percentage formula.
  * Returns NaN when standard is 0 to avoid division by zero.

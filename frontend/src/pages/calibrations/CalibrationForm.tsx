@@ -74,6 +74,9 @@ function pressureMeasurements(
     const pass = hasLeft && errorPct !== undefined && isFinite(errorPct)
       ? isPass(errorPct)
       : undefined
+    const uncertaintyNum = row.uncertainty_pct !== undefined && row.uncertainty_pct !== ''
+      ? parseFloat(row.uncertainty_pct)
+      : undefined
     return {
       id: crypto.randomUUID(),
       record_id: recordId,
@@ -83,6 +86,8 @@ function pressureMeasurements(
       unit: undefined,
       pass,
       error_pct: errorPct !== undefined && isFinite(errorPct) ? errorPct : undefined,
+      uncertainty_pct: uncertaintyNum !== undefined && isFinite(uncertaintyNum) ? uncertaintyNum : null,
+      confidence_level: row.confidence_level || null,
     }
   })
 }
@@ -411,6 +416,8 @@ export default function CalibrationForm() {
               standardValue: m.standard_value ?? 0,
               asFound: m.measured_value != null ? String(m.measured_value) : '',
               asLeft: m.measured_value != null ? String(m.measured_value) : '',
+              uncertainty_pct: m.uncertainty_pct != null ? String(m.uncertainty_pct) : '',
+              confidence_level: m.confidence_level ?? '',
             })))
           } else if (type === 'temperature') {
             setTemperatureRows(measurements.map(m => ({
@@ -746,7 +753,7 @@ export default function CalibrationForm() {
         </h2>
 
         {typeLower === 'pressure' && (
-          <PressureTemplate asset={asset} rows={pressureRows} onChange={setPressureRows} />
+          <PressureTemplate asset={asset} rows={pressureRows} onChange={setPressureRows} showUncertainty />
         )}
 
         {typeLower === 'temperature' && (
