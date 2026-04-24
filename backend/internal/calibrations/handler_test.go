@@ -371,3 +371,38 @@ func TestBuildCertHTML_WithSupervisor(t *testing.T) {
 		t.Errorf("expected supervisor name in HTML output")
 	}
 }
+
+func TestUpdate_BadJSON(t *testing.T) {
+	h := newHandler(nil)
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPatch, "/calibrations/abc", strings.NewReader(`{bad}`))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestBuildMinimalPDF_ReturnsPDF(t *testing.T) {
+	p := minimalParams()
+	pdf := buildMinimalPDF(p)
+	if len(pdf) == 0 {
+		t.Fatal("expected non-empty PDF bytes")
+	}
+	if !strings.HasPrefix(string(pdf), "%PDF-") {
+		t.Errorf("expected PDF magic bytes, got: %q", string(pdf[:10]))
+	}
+}
+
+func TestBuildMinimalPDF_WithRange(t *testing.T) {
+	p := minimalParams()
+	lo, hi := 0.0, 100.0
+	p.rangeMin = &lo
+	p.rangeMax = &hi
+	pdf := buildMinimalPDF(p)
+	if !strings.Contains(string(pdf), "100") {
+		t.Errorf("expected range value in PDF content")
+	}
+}

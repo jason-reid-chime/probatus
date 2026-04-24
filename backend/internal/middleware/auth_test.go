@@ -237,3 +237,24 @@ func TestRoleFromCtx_Missing(t *testing.T) {
 		t.Errorf("expected empty string for missing key, got %q", got)
 	}
 }
+
+func TestWithTenantID(t *testing.T) {
+	ctx := WithTenantID(context.Background(), "tenant-abc")
+	if got := TenantIDFromCtx(ctx); got != "tenant-abc" {
+		t.Errorf("expected tenant-abc, got %q", got)
+	}
+}
+
+func TestWithUserID(t *testing.T) {
+	ctx := WithUserID(context.Background(), "user-xyz")
+	if got := UserIDFromCtx(ctx); got != "user-xyz" {
+		t.Errorf("expected user-xyz, got %q", got)
+	}
+}
+
+func TestWithRole(t *testing.T) {
+	ctx := WithRole(context.Background(), "supervisor")
+	if got := RoleFromCtx(ctx); got != "supervisor" {
+		t.Errorf("expected supervisor, got %q", got)
+	}
+}
