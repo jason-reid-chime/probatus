@@ -11,12 +11,26 @@ vi.mock('react-router-dom', async (orig) => ({
 }))
 vi.mock('../../hooks/useAssets', () => ({ useAsset: vi.fn() }))
 vi.mock('../../hooks/useCalibration', () => ({ useCalibrationsByAsset: vi.fn() }))
-vi.mock('../../lib/supabase', () => ({
-  supabase: {
-    from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: [] }) }),
-    auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
-  },
-}))
+vi.mock('../../lib/supabase', () => {
+  const chain: Record<string, unknown> = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    in: vi.fn(),
+    single: vi.fn(),
+    then: (resolve: (v: unknown) => unknown) =>
+      Promise.resolve({ data: [] }).then(resolve),
+  }
+  ;(chain.select as ReturnType<typeof vi.fn>).mockReturnValue(chain)
+  ;(chain.eq as ReturnType<typeof vi.fn>).mockReturnValue(chain)
+  ;(chain.in as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [] })
+  ;(chain.single as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null })
+  return {
+    supabase: {
+      from: vi.fn().mockReturnValue(chain),
+      auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
+    },
+  }
+})
 
 import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
