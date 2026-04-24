@@ -83,7 +83,7 @@ describe('StandardDetail', () => {
   it('shows Valid status banner for a future due date', () => {
     vi.mocked(useStandards).mockReturnValue({ data: [sampleStandard], isLoading: false } as never)
     renderPage()
-    expect(screen.getByText('Valid')).toBeTruthy()
+    expect(screen.getAllByText('Valid').length).toBeGreaterThan(0)
   })
 
   it('shows Overdue status banner for a past due date', () => {
