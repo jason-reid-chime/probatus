@@ -102,27 +102,27 @@ export default function CalendarView() {
     return map
   }, [assets])
 
-  const monthStart = new Date(year, month, 1)
-  const monthEnd = new Date(year, month + 1, 0)
-
   const assetsThisMonth = useMemo(() => {
+    const start = new Date(year, month, 1)
+    const end = new Date(year, month + 1, 0)
     return assets.filter((a) => {
       const d = new Date(a.next_due_at)
-      return d >= monthStart && d <= monthEnd
+      return d >= start && d <= end
     })
   }, [assets, year, month])
 
   const assetsByWeek = useMemo(() => {
+    const start = new Date(year, month, 1)
     const groups = new Map<number, CalAsset[]>()
     for (const asset of assetsThisMonth) {
       const d = new Date(asset.next_due_at)
-      const week = getWeekNumber(d, monthStart)
+      const week = getWeekNumber(d, start)
       const existing = groups.get(week) ?? []
       existing.push(asset)
       groups.set(week, existing)
     }
     return groups
-  }, [assetsThisMonth])
+  }, [assetsThisMonth, year, month])
 
   const calendarCells = useMemo(() => buildCalendarGrid(year, month), [year, month])
 

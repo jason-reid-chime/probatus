@@ -83,9 +83,9 @@ export function useWorkOrder(id: string) {
       if (error) throw error
       if (!data) return null
 
-      const assets = ((data as any).work_order_assets ?? [])
-        .map((woa: any) => woa.asset)
-        .filter(Boolean)
+      type AssetRow = WorkOrderWithAssets['assets'][number]
+      const rawJoin = (data as unknown as { work_order_assets: { asset: AssetRow | null }[] }).work_order_assets ?? []
+      const assets = rawJoin.map((woa) => woa.asset).filter((a): a is AssetRow => a !== null)
 
       return { ...data, assets } as WorkOrderWithAssets
     },
