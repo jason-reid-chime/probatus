@@ -40,6 +40,7 @@ export interface LocalCalibrationRecord {
   supervisor_signature?: string
   certificate_url?: string
   notes?: string
+  rejection_reason?: string | null
   updated_at: string
 }
 
@@ -48,7 +49,8 @@ export interface LocalMeasurement {
   record_id: string
   point_label: string
   standard_value?: number
-  measured_value?: number
+  as_found_value?: number | null  // instrument reading before adjustment
+  measured_value?: number          // instrument reading after adjustment (as-left)
   unit?: string
   pass?: boolean
   error_pct?: number

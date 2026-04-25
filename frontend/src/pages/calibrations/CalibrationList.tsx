@@ -187,9 +187,7 @@ export default function CalibrationList() {
     setBulkLoading(true)
     setBulkError(null)
     const ids = [...selected]
-    // Delete measurements first (cascade should handle it but being explicit)
-    await supabase.from('calibration_measurements').delete().in('record_id', ids)
-    await supabase.from('calibration_standards_used').delete().in('record_id', ids)
+    // Cascade in schema handles measurements + standards_used automatically
     const { error } = await supabase.from('calibration_records').delete().in('id', ids)
     if (error) {
       setBulkError(error.message)

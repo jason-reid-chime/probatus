@@ -137,3 +137,22 @@ export async function retryFailed(): Promise<void> {
     )
   )
 }
+
+/**
+ * Permanently delete all failed outbox entries (retries >= MAX_RETRIES).
+ * Used when entries are unrecoverable (e.g. parent record was deleted server-side).
+ */
+export async function clearFailed(): Promise<void> {
+  const dead = await db.outbox
+    .filter((e) => e.retries >= MAX_RETRIES)
+    .toArray()
+  await db.outbox.bulkDelete(dead.map((e) => e.id!))
+}
+
+/**
+ * Permanently delete ALL outbox entries regardless of status.
+ * Nuclear option — user loses any unsynced changes.
+ */
+export async function clearAllOutbox(): Promise<void> {
+  await db.outbox.clear()
+}

@@ -625,6 +625,32 @@ export default function CalibrationDetail() {
         </div>
       )}
 
+      {/* Rejection notice */}
+      {record.status === 'rejected' && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 space-y-3">
+          <div className="flex items-center gap-2 text-red-700 font-semibold">
+            <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+            This calibration was rejected
+          </div>
+          {record.rejection_reason && (
+            <p className="text-sm text-red-800 bg-red-100 rounded-lg px-3 py-2">{record.rejection_reason}</p>
+          )}
+          <button
+            type="button"
+            onClick={async () => {
+              await supabase.from('calibration_records').update({ status: 'in_progress', rejection_reason: null }).eq('id', recordId)
+              await db.calibration_records.update(recordId!, { status: 'in_progress', rejection_reason: null })
+              queryClient.setQueryData(calibrationKeys.detail(recordId!), (old: LocalCalibrationRecord | undefined) =>
+                old ? { ...old, status: 'in_progress', rejection_reason: null } : old
+              )
+            }}
+            className="text-sm font-semibold text-white bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg transition-colors"
+          >
+            Reopen for Rework
+          </button>
+        </div>
+      )}
+
       {/* Continue editing */}
       {record.status === 'in_progress' && (
         <button

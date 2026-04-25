@@ -24,6 +24,8 @@ import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
+import type { LocalMeasurement } from '../../lib/db'
+import DriftChart from '../../components/calibrations/DriftChart'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -159,6 +161,7 @@ export default function AssetDetail() {
   const [deletingAsset, setDeletingAsset] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [driftMeasurements, setDriftMeasurements] = useState<Record<string, LocalMeasurement[]>>({})
 
   const canManage = profile?.role === 'supervisor' || profile?.role === 'admin'
 
@@ -192,6 +195,26 @@ export default function AssetDetail() {
           map[row.id] = row.full_name ?? 'Unknown'
         }
         setTechNames(map)
+      })
+  }, [calibrations])
+
+  // Fetch measurements for drift trend chart (approved cals only)
+  useEffect(() => {
+    const approved = calibrations.filter(c => c.status === 'approved')
+    if (approved.length < 2) return
+    const ids = approved.map(c => c.id)
+    supabase
+      .from('calibration_measurements')
+      .select('*')
+      .in('record_id', ids)
+      .then(({ data }) => {
+        if (!data) return
+        const map: Record<string, LocalMeasurement[]> = {}
+        for (const m of data as LocalMeasurement[]) {
+          if (!map[m.record_id]) map[m.record_id] = []
+          map[m.record_id].push(m)
+        }
+        setDriftMeasurements(map)
       })
   }, [calibrations])
 
@@ -455,6 +478,9 @@ export default function AssetDetail() {
             </div>
           )}
         </div>
+
+        {/* Drift Trend Chart */}
+        <DriftChart calibrations={calibrations} measurements={driftMeasurements} tolerancePct={1} />
 
         {/* Standards Used */}
         {standards.length > 0 && (

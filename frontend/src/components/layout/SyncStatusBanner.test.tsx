@@ -4,10 +4,15 @@ import userEvent from '@testing-library/user-event'
 import SyncStatusBanner from './SyncStatusBanner'
 
 vi.mock('../../hooks/useOutboxCount')
-vi.mock('../../lib/sync/outbox', () => ({ retryFailed: vi.fn(), flushOutbox: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('../../lib/sync/outbox', () => ({
+  retryFailed: vi.fn(),
+  flushOutbox: vi.fn().mockResolvedValue(undefined),
+  clearFailed: vi.fn(),
+  clearAllOutbox: vi.fn(),
+}))
 
 import { useOutboxCount } from '../../hooks/useOutboxCount'
-import { retryFailed } from '../../lib/sync/outbox'
+import { retryFailed, clearFailed } from '../../lib/sync/outbox'
 
 const empty  = { pending: 0, failed: 0 }
 const onePending = { pending: 1, failed: 0 }
@@ -58,5 +63,21 @@ describe('SyncStatusBanner', () => {
     render(<SyncStatusBanner />)
     await userEvent.click(screen.getByRole('button', { name: /retry/i }))
     expect(retryFailed).toHaveBeenCalled()
+  })
+
+  it('discard button calls clearFailed after confirm', async () => {
+    vi.mocked(useOutboxCount).mockReturnValue(oneFailed)
+    vi.stubGlobal('confirm', vi.fn().mockReturnValue(true))
+    render(<SyncStatusBanner />)
+    await userEvent.click(screen.getByRole('button', { name: /discard/i }))
+    expect(clearFailed).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('shows sync now and discard all when pending', () => {
+    vi.mocked(useOutboxCount).mockReturnValue(onePending)
+    render(<SyncStatusBanner />)
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /discard all/i })).toBeTruthy()
   })
 })

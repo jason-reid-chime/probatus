@@ -1,11 +1,6 @@
 import { useOutboxCount } from '../../hooks/useOutboxCount'
-import { retryFailed, flushOutbox } from '../../lib/sync/outbox'
+import { retryFailed, flushOutbox, clearFailed, clearAllOutbox } from '../../lib/sync/outbox'
 
-/**
- * Shows an amber banner while changes are pending sync, and a red banner
- * when entries have permanently failed (hit the retry limit).
- * Disappears automatically once the outbox is empty.
- */
 export default function SyncStatusBanner() {
   const { pending, failed } = useOutboxCount()
 
@@ -21,12 +16,24 @@ export default function SyncStatusBanner() {
           <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
           {label} failed to sync
         </span>
-        <button
-          onClick={retryFailed}
-          className="text-xs font-semibold underline underline-offset-2 hover:text-red-900"
-        >
-          Retry
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={retryFailed}
+            className="text-xs font-semibold underline underline-offset-2 hover:text-red-900"
+          >
+            Retry
+          </button>
+          <button
+            onClick={() => {
+              if (window.confirm(`Discard ${failed} failed change${failed !== 1 ? 's' : ''}? This cannot be undone.`)) {
+                clearFailed()
+              }
+            }}
+            className="text-xs font-semibold underline underline-offset-2 hover:text-red-900 text-red-600"
+          >
+            Discard
+          </button>
+        </div>
       </div>
     )
   }
@@ -43,12 +50,24 @@ export default function SyncStatusBanner() {
           <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
           {label} pending sync
         </span>
-        <button
-          onClick={() => flushOutbox().catch(console.error)}
-          className="text-xs font-semibold underline underline-offset-2 hover:text-amber-900"
-        >
-          Sync now
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => flushOutbox().catch(console.error)}
+            className="text-xs font-semibold underline underline-offset-2 hover:text-amber-900"
+          >
+            Sync now
+          </button>
+          <button
+            onClick={() => {
+              if (window.confirm(`Discard all ${pending} pending change${pending !== 1 ? 's' : ''}? This cannot be undone.`)) {
+                clearAllOutbox()
+              }
+            }}
+            className="text-xs font-semibold underline underline-offset-2 hover:text-amber-900 text-amber-600"
+          >
+            Discard all
+          </button>
+        </div>
       </div>
     )
   }

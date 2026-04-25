@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { CheckCircle, ClipboardCheck, RefreshCw, AlertCircle } from 'lucide-react'
+import { CheckCircle, ClipboardCheck, RefreshCw, AlertCircle, XCircle } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { db } from '../../lib/db'
 import { useAuth } from '../../hooks/useAuth'
@@ -36,6 +36,9 @@ export default function ApprovalDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [approving, setApproving] = useState<string | null>(null)
+  const [rejecting, setRejecting] = useState<string | null>(null)   // record id being rejected
+  const [rejectReason, setRejectReason] = useState('')
+  const [rejectError, setRejectError] = useState<string | null>(null)
 
   // Redirect technicians — done in effect to avoid calling navigate during render
   useEffect(() => {
@@ -130,6 +133,26 @@ export default function ApprovalDashboard() {
     } finally {
       setApproving(null)
     }
+  }
+
+  async function handleReject(recordId: string) {
+    if (!rejectReason.trim()) {
+      setRejectError('Rejection reason is required')
+      return
+    }
+    setRejectError(null)
+    const { error: err } = await supabase
+      .from('calibration_records')
+      .update({ status: 'rejected', rejection_reason: rejectReason.trim() })
+      .eq('id', recordId)
+    if (err) {
+      setRejectError(err.message)
+      return
+    }
+    await db.calibration_records.update(recordId, { status: 'rejected', rejection_reason: rejectReason.trim() })
+    setRecords((prev) => prev.filter((r) => r.id !== recordId))
+    setRejecting(null)
+    setRejectReason('')
   }
 
   // Don't render anything while technician redirect is in flight
@@ -236,6 +259,14 @@ export default function ApprovalDashboard() {
                       Review
                     </Link>
                     <button
+                      onClick={() => { setRejecting(r.id); setRejectReason(''); setRejectError(null) }}
+                      disabled={approving === r.id}
+                      className="text-sm px-3 py-1.5 rounded-lg border border-red-200 text-red-600 font-medium hover:bg-red-50 disabled:opacity-50 transition-colors"
+                    >
+                      <XCircle size={14} className="inline mr-1" />
+                      Reject
+                    </button>
+                    <button
                       onClick={() => handleApprove(r.id)}
                       disabled={approving === r.id}
                       className="text-sm px-3 py-1.5 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50 transition-colors"
@@ -243,6 +274,29 @@ export default function ApprovalDashboard() {
                       {approving === r.id ? 'Approving…' : 'Approve'}
                     </button>
                   </div>
+                  {/* Inline reject reason panel */}
+                  {rejecting === r.id && (
+                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-xl space-y-2">
+                      <p className="text-xs font-semibold text-red-700">Rejection reason</p>
+                      <textarea
+                        value={rejectReason}
+                        onChange={(e) => setRejectReason(e.target.value)}
+                        rows={2}
+                        placeholder="Describe what needs to be corrected…"
+                        className="w-full text-sm px-3 py-2 border border-red-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+                        autoFocus
+                      />
+                      {rejectError && <p className="text-xs text-red-600">{rejectError}</p>}
+                      <div className="flex gap-2">
+                        <button onClick={() => handleReject(r.id)} className="px-3 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors">
+                          Confirm Reject
+                        </button>
+                        <button onClick={() => { setRejecting(null); setRejectReason('') }} className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               )
             })}

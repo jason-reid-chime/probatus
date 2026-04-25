@@ -67,7 +67,9 @@ function pressureMeasurements(
   const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
   return rows.map((row) => {
     const asLeftNum = parseFloat(row.asLeft)
+    const asFoundNum = parseFloat(row.asFound)
     const hasLeft = row.asLeft !== '' && !isNaN(asLeftNum)
+    const hasFound = row.asFound !== '' && !isNaN(asFoundNum)
     const errorPct = hasLeft && span !== 0
       ? Math.abs(asLeftNum - row.standardValue) / span * 100
       : undefined
@@ -82,6 +84,7 @@ function pressureMeasurements(
       record_id: recordId,
       point_label: `${row.pct}%`,
       standard_value: row.standardValue,
+      as_found_value: hasFound ? asFoundNum : null,
       measured_value: hasLeft ? asLeftNum : undefined,
       unit: undefined,
       pass,
@@ -180,15 +183,18 @@ function switchMeasurements(
   const unit = asset.range_unit
   const ms: LocalMeasurement[] = []
 
-  const addRow = (label: string, asLeftStr: string) => {
+  const addRow = (label: string, asLeftStr: string, asFoundStr: string) => {
     const val = parseFloat(asLeftStr)
     if (asLeftStr === '' || isNaN(val) || isNaN(setpointNum)) return
+    const foundNum = parseFloat(asFoundStr)
+    const hasFound = asFoundStr !== '' && !isNaN(foundNum)
     const errPct = span > 0 ? Math.abs(val - setpointNum) / span * 100 : 0
     ms.push({
       id: crypto.randomUUID(),
       record_id: recordId,
       point_label: label,
       standard_value: setpointNum,
+      as_found_value: hasFound ? foundNum : null,
       measured_value: val,
       unit,
       error_pct: errPct,
@@ -196,8 +202,8 @@ function switchMeasurements(
     })
   }
 
-  addRow('Trip (Rising)', data.asLeftTrip)
-  addRow('Reset (Falling)', data.asLeftReset)
+  addRow('Trip (Rising)', data.asLeftTrip, data.asFoundTrip)
+  addRow('Reset (Falling)', data.asLeftReset, data.asFoundReset)
   return ms
 }
 
@@ -240,6 +246,8 @@ function transmitterMeasurements(
     const hasPV = row.pvAsLeft !== '' && !isNaN(pvNum)
     const hasMA = row.maAsLeft !== '' && !isNaN(maNum)
 
+    const pvFoundNum = parseFloat(row.pvAsFound)
+    const maFoundNum = parseFloat(row.maAsFound)
     if (hasPV) {
       const errPct = calcErrorPct(row.appliedValue, pvNum)
       ms.push({
@@ -247,6 +255,7 @@ function transmitterMeasurements(
         record_id: recordId,
         point_label: `${row.pct}% PV`,
         standard_value: row.appliedValue,
+        as_found_value: row.pvAsFound !== '' && !isNaN(pvFoundNum) ? pvFoundNum : null,
         measured_value: pvNum,
         error_pct: isFinite(errPct) ? errPct : undefined,
         pass: isFinite(errPct) ? isPass(errPct) : undefined,
@@ -260,6 +269,7 @@ function transmitterMeasurements(
         record_id: recordId,
         point_label: `${row.pct}% mA`,
         standard_value: expMA,
+        as_found_value: row.maAsFound !== '' && !isNaN(maFoundNum) ? maFoundNum : null,
         measured_value: maNum,
         unit: 'mA',
         error_pct: isFinite(errPct) ? errPct : undefined,
@@ -414,7 +424,7 @@ export default function CalibrationForm() {
             setPressureRows(measurements.map(m => ({
               pct: m.standard_value ?? 0,
               standardValue: m.standard_value ?? 0,
-              asFound: m.measured_value != null ? String(m.measured_value) : '',
+              asFound: m.as_found_value != null ? String(m.as_found_value) : '',
               asLeft: m.measured_value != null ? String(m.measured_value) : '',
               uncertainty_pct: m.uncertainty_pct != null ? String(m.uncertainty_pct) : '',
               confidence_level: m.confidence_level ?? '',
@@ -437,8 +447,8 @@ export default function CalibrationForm() {
             setSwitchData({
               setpoint: trip?.standard_value != null ? String(trip.standard_value) : '',
               tolerancePct: '2',
-              asFoundTrip: '',
-              asFoundReset: '',
+              asFoundTrip: trip?.as_found_value != null ? String(trip.as_found_value) : '',
+              asFoundReset: reset?.as_found_value != null ? String(reset.as_found_value) : '',
               asLeftTrip: trip?.measured_value != null ? String(trip.measured_value) : '',
               asLeftReset: reset?.measured_value != null ? String(reset.measured_value) : '',
             })
@@ -462,9 +472,9 @@ export default function CalibrationForm() {
                 return {
                   pct,
                   appliedValue: m.standard_value ?? 0,
-                  pvAsFound: '',
+                  pvAsFound: m.as_found_value != null ? String(m.as_found_value) : '',
                   pvAsLeft: m.measured_value != null ? String(m.measured_value) : '',
-                  maAsFound: '',
+                  maAsFound: maMeas?.as_found_value != null ? String(maMeas.as_found_value) : '',
                   maAsLeft: maMeas?.measured_value != null ? String(maMeas.measured_value) : '',
                 }
               }))
