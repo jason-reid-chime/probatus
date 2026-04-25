@@ -58,7 +58,19 @@ export default function CustomersList() {
     setDeleteLoading(true)
     setDeleteError(null)
 
-    // Step 1: unlink assets
+    // Step 1: unlink profiles (portal users) that reference this customer
+    const { error: profileErr } = await supabase
+      .from('profiles')
+      .update({ customer_id: null })
+      .eq('customer_id', deletingCustomer.id)
+
+    if (profileErr) {
+      setDeleteError(profileErr.message)
+      setDeleteLoading(false)
+      return
+    }
+
+    // Step 2: unlink assets
     const { error: unlinkErr } = await supabase
       .from('assets')
       .update({ customer_id: null })
@@ -70,7 +82,7 @@ export default function CustomersList() {
       return
     }
 
-    // Step 2: delete the customer
+    // Step 3: delete the customer
     const { error: deleteErr } = await supabase
       .from('customers')
       .delete()

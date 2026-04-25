@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
-  AlertCircle, Clock, Calendar, Shield, Wifi, WifiOff, RefreshCw,
+  AlertCircle, Clock, Calendar, Shield, Wifi, WifiOff, RefreshCw, CalendarDays, ChevronRight,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -169,6 +169,21 @@ export default function Dashboard() {
       {!statsLoading && !isError && stats && (
         <PassRateCard rate={stats.pass_rate_30d} />
       )}
+
+      {/* Calendar shortcut */}
+      <Link
+        to="/calendar"
+        className="flex items-center justify-between rounded-2xl border border-brand-200 bg-brand-50 px-5 py-4 hover:bg-brand-100 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <CalendarDays size={22} className="text-brand-600" />
+          <div>
+            <p className="text-sm font-semibold text-brand-700">Calibration Calendar</p>
+            <p className="text-xs text-brand-500">View all upcoming calibrations by date</p>
+          </div>
+        </div>
+        <ChevronRight size={18} className="text-brand-400" />
+      </Link>
 
       {/* Asset lists */}
       <div className="grid md:grid-cols-2 gap-6">

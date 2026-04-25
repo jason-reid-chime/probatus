@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, Link } from 'react-router-dom'
 import {
   LayoutDashboard,
   Wrench,
@@ -113,9 +113,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
     <aside className="flex flex-col h-full bg-white border-r border-gray-200 w-64 flex-shrink-0">
       {/* Logo */}
       <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100">
-        <span className="text-2xl font-black tracking-widest text-brand-700 select-none">
+        <Link to="/" className="text-2xl font-black tracking-widest text-brand-700 select-none hover:text-brand-500 transition-colors">
           PROBATUS
-        </span>
+        </Link>
         {/* Close button (mobile) */}
         {onClose && (
           <button

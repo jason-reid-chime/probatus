@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, X } from 'lucide-react'
+import { ArrowLeft, X, Loader2 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
-import { useWorkOrder, useUpsertWorkOrder } from '../../hooks/useWorkOrders'
+import { useWorkOrder, useUpsertWorkOrder, type WorkOrderWithAssets } from '../../hooks/useWorkOrders'
 import { supabase } from '../../lib/supabase'
 
 interface Customer {
@@ -36,17 +36,30 @@ const emptyForm: FormValues = {
 const inputClass =
   'w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent text-base'
 
-export default function WorkOrderForm() {
-  const navigate = useNavigate()
-  const { id } = useParams<{ id: string }>()
-  const { profile } = useAuth()
-  const isEdit = Boolean(id)
+function toFormValues(wo: WorkOrderWithAssets): FormValues {
+  return {
+    title: wo.title,
+    scheduled_date: wo.scheduled_date,
+    customer_id: wo.customer_id ?? '',
+    status: wo.status,
+    notes: wo.notes ?? '',
+  }
+}
 
-  const { data: existing, isLoading: loadingExisting } = useWorkOrder(id ?? '')
+interface InnerFormProps {
+  id: string | undefined
+  initialValues: FormValues
+  initialAssetIds: string[]
+  profile: { tenant_id: string; id: string } | null
+  isEdit: boolean
+}
+
+function InnerForm({ id, initialValues, initialAssetIds, profile, isEdit }: InnerFormProps) {
+  const navigate = useNavigate()
   const upsert = useUpsertWorkOrder()
 
-  const [values, setValues] = useState<FormValues>(emptyForm)
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
+  const [values, setValues] = useState<FormValues>(initialValues)
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(initialAssetIds)
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
@@ -76,18 +89,6 @@ export default function WorkOrderForm() {
     })
   }, [profile?.tenant_id])
 
-  useEffect(() => {
-    if (!existing) return
-    setValues({
-      title: existing.title,
-      scheduled_date: existing.scheduled_date,
-      customer_id: existing.customer_id ?? '',
-      status: existing.status,
-      notes: existing.notes ?? '',
-    })
-    setSelectedAssetIds(existing.assets.map((a) => a.id))
-  }, [existing])
-
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
   ) {
@@ -99,7 +100,7 @@ export default function WorkOrderForm() {
 
   function toggleAsset(assetId: string) {
     setSelectedAssetIds((prev) =>
-      prev.includes(assetId) ? prev.filter((id) => id !== assetId) : [...prev, assetId],
+      prev.includes(assetId) ? prev.filter((i) => i !== assetId) : [...prev, assetId],
     )
   }
 
@@ -121,7 +122,7 @@ export default function WorkOrderForm() {
     try {
       await upsert.mutateAsync({
         workOrder: {
-          id: id,
+          id,
           title: values.title.trim(),
           scheduled_date: values.scheduled_date,
           customer_id: values.customer_id || null,
@@ -136,7 +137,15 @@ export default function WorkOrderForm() {
     }
   }
 
-  const isLoading = (isEdit && loadingExisting) || loadingData
+  if (loadingData) {
+    return (
+      <div className="space-y-3 max-w-3xl mx-auto px-4 py-6">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
@@ -153,192 +162,192 @@ export default function WorkOrderForm() {
         </h1>
       </div>
 
-      {isLoading && (
-        <div className="space-y-3">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />
-          ))}
-        </div>
-      )}
+      <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Details</h2>
 
-      {!isLoading && (
-        <form onSubmit={handleSubmit} className="space-y-5" noValidate>
-          <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-              Details
-            </h2>
-
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">
-                Title <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                name="title"
-                value={values.title}
-                onChange={handleChange}
-                className={inputClass}
-                placeholder="Annual calibration run"
-                autoFocus
-              />
-              {titleError && <p className="text-sm text-red-600">{titleError}</p>}
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">
-                Scheduled Date <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                name="scheduled_date"
-                value={values.scheduled_date}
-                onChange={handleChange}
-                className={inputClass}
-              />
-              {dateError && <p className="text-sm text-red-600">{dateError}</p>}
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">Customer</label>
-              <select
-                name="customer_id"
-                value={values.customer_id}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option value="">No customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">Status</label>
-              <select
-                name="status"
-                value={values.status}
-                onChange={handleChange}
-                className={inputClass}
-              >
-                <option value="open">Open</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">Notes</label>
-              <textarea
-                name="notes"
-                value={values.notes}
-                onChange={handleChange}
-                rows={3}
-                className={`${inputClass} resize-none`}
-                placeholder="Any additional notes…"
-              />
-            </div>
+          <div className="space-y-1">
+            <label className="block text-sm font-medium text-gray-700">
+              Title <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              name="title"
+              value={values.title}
+              onChange={handleChange}
+              className={inputClass}
+              placeholder="Annual calibration run"
+              autoFocus
+            />
+            {titleError && <p className="text-sm text-red-600">{titleError}</p>}
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-              Assets
-            </h2>
+          <div className="space-y-1">
+            <label className="block text-sm font-medium text-gray-700">
+              Scheduled Date <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="date"
+              name="scheduled_date"
+              value={values.scheduled_date}
+              onChange={handleChange}
+              className={inputClass}
+            />
+            {dateError && <p className="text-sm text-red-600">{dateError}</p>}
+          </div>
 
-            {selectedAssetIds.length > 0 && (
-              <div className="flex flex-wrap gap-2 pb-2">
-                {selectedAssetIds.map((assetId) => {
-                  const asset = assets.find((a) => a.id === assetId)
-                  if (!asset) return null
-                  return (
-                    <span
-                      key={assetId}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700 border border-brand-200"
-                    >
-                      {asset.tag_id}
-                      {asset.serial_number ? ` · ${asset.serial_number}` : ''}
-                      <button
-                        type="button"
-                        onClick={() => toggleAsset(assetId)}
-                        className="ml-0.5 text-brand-500 hover:text-brand-700"
-                        aria-label={`Remove ${asset.tag_id}`}
-                      >
-                        <X size={14} />
-                      </button>
-                    </span>
-                  )
-                })}
-              </div>
-            )}
+          <div className="space-y-1">
+            <label className="block text-sm font-medium text-gray-700">Customer</label>
+            <select name="customer_id" value={values.customer_id} onChange={handleChange} className={inputClass}>
+              <option value="">No customer</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
 
-            <div className="max-h-60 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
-              {assets.length === 0 && (
-                <p className="px-4 py-3 text-sm text-gray-400 italic">No assets available</p>
-              )}
-              {assets.map((asset) => {
-                const selected = selectedAssetIds.includes(asset.id)
+          <div className="space-y-1">
+            <label className="block text-sm font-medium text-gray-700">Status</label>
+            <select name="status" value={values.status} onChange={handleChange} className={inputClass}>
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block text-sm font-medium text-gray-700">Notes</label>
+            <textarea
+              name="notes"
+              value={values.notes}
+              onChange={handleChange}
+              rows={3}
+              className={`${inputClass} resize-none`}
+              placeholder="Any additional notes…"
+            />
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Assets</h2>
+
+          {selectedAssetIds.length > 0 && (
+            <div className="flex flex-wrap gap-2 pb-2">
+              {selectedAssetIds.map((assetId) => {
+                const asset = assets.find((a) => a.id === assetId)
+                if (!asset) return null
                 return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => toggleAsset(asset.id)}
-                    className={[
-                      'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors',
-                      selected
-                        ? 'bg-brand-50 text-brand-700'
-                        : 'text-gray-700 hover:bg-gray-50',
-                    ].join(' ')}
+                  <span
+                    key={assetId}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-sm font-medium text-brand-700 border border-brand-200"
                   >
-                    <span
-                      className={[
-                        'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border',
-                        selected
-                          ? 'bg-brand-500 border-brand-500'
-                          : 'border-gray-300 bg-white',
-                      ].join(' ')}
+                    {asset.tag_id}
+                    {asset.serial_number ? ` · ${asset.serial_number}` : ''}
+                    <button
+                      type="button"
+                      onClick={() => toggleAsset(assetId)}
+                      className="ml-0.5 text-brand-500 hover:text-brand-700"
+                      aria-label={`Remove ${asset.tag_id}`}
                     >
-                      {selected && (
-                        <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="currentColor">
-                          <path d="M10 3L5 8.5 2 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                        </svg>
-                      )}
-                    </span>
-                    <span className="font-mono font-semibold">{asset.tag_id}</span>
-                    {asset.serial_number && (
-                      <span className="text-gray-500">S/N: {asset.serial_number}</span>
-                    )}
-                    <span className="ml-auto text-xs text-gray-400 capitalize">
-                      {asset.instrument_type.replace(/_/g, ' ')}
-                    </span>
-                  </button>
+                      <X size={14} />
+                    </button>
+                  </span>
                 )
               })}
             </div>
-          </div>
+          )}
 
-          {submitError && <p className="text-sm text-red-600">{submitError}</p>}
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => navigate(-1)}
-              className="flex-1 border border-gray-300 text-gray-700 font-semibold py-3 rounded-xl transition-colors hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={upsert.isPending}
-              className="flex-1 bg-brand-500 hover:bg-brand-700 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-colors"
-            >
-              {upsert.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Work Order'}
-            </button>
+          <div className="max-h-60 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+            {assets.length === 0 && (
+              <p className="px-4 py-3 text-sm text-gray-400 italic">No assets available</p>
+            )}
+            {assets.map((asset) => {
+              const selected = selectedAssetIds.includes(asset.id)
+              return (
+                <button
+                  key={asset.id}
+                  type="button"
+                  onClick={() => toggleAsset(asset.id)}
+                  className={[
+                    'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors',
+                    selected ? 'bg-brand-50 text-brand-700' : 'text-gray-700 hover:bg-gray-50',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border',
+                      selected ? 'bg-brand-500 border-brand-500' : 'border-gray-300 bg-white',
+                    ].join(' ')}
+                  >
+                    {selected && (
+                      <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="currentColor">
+                        <path d="M10 3L5 8.5 2 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </svg>
+                    )}
+                  </span>
+                  <span className="font-mono font-semibold">{asset.tag_id}</span>
+                  {asset.serial_number && (
+                    <span className="text-gray-500">S/N: {asset.serial_number}</span>
+                  )}
+                  <span className="ml-auto text-xs text-gray-400 capitalize">
+                    {asset.instrument_type.replace(/_/g, ' ')}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        </form>
-      )}
+        </div>
+
+        {submitError && <p className="text-sm text-red-600">{submitError}</p>}
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex-1 border border-gray-300 text-gray-700 font-semibold py-3 rounded-xl transition-colors hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={upsert.isPending}
+            className="flex-1 bg-brand-500 hover:bg-brand-700 disabled:opacity-60 text-white font-semibold py-3 rounded-xl transition-colors inline-flex items-center justify-center gap-2"
+          >
+            {upsert.isPending && <Loader2 size={16} className="animate-spin" />}
+            {upsert.isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Work Order'}
+          </button>
+        </div>
+      </form>
     </div>
+  )
+}
+
+export default function WorkOrderForm() {
+  const { id } = useParams<{ id: string }>()
+  const { profile } = useAuth()
+  const isEdit = Boolean(id)
+
+  const { data: existing, isLoading: loadingExisting } = useWorkOrder(id ?? '')
+
+  if (isEdit && loadingExisting) {
+    return (
+      <div className="space-y-3 max-w-3xl mx-auto px-4 py-6">
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <InnerForm
+      key={existing?.id ?? 'new'}
+      id={id}
+      initialValues={existing ? toFormValues(existing) : emptyForm}
+      initialAssetIds={existing?.assets.map((a) => a.id) ?? []}
+      profile={profile}
+      isEdit={isEdit}
+    />
   )
 }
