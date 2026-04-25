@@ -32,7 +32,7 @@ export async function upsertCalibrationRecord(
 ): Promise<LocalCalibrationRecord> {
   const { data, error } = await supabase
     .from('calibration_records')
-    .upsert(record, { onConflict: 'local_id' })
+    .upsert(record, { onConflict: 'id' })
     .select()
     .single()
 

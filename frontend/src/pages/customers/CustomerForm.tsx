@@ -6,11 +6,13 @@ import { supabase } from '../../lib/supabase'
 
 interface FormValues {
   name: string
-  address: string
   contact: string
+  email: string
+  phone: string
+  address: string
 }
 
-const emptyForm: FormValues = { name: '', address: '', contact: '' }
+const emptyForm: FormValues = { name: '', contact: '', email: '', phone: '', address: '' }
 
 export default function CustomerForm() {
   const navigate = useNavigate()
@@ -25,7 +27,6 @@ export default function CustomerForm() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [nameError, setNameError] = useState<string | null>(null)
 
-  // Load existing customer when editing
   useEffect(() => {
     if (!id) return
     supabase
@@ -37,17 +38,17 @@ export default function CustomerForm() {
         if (!error && data) {
           setValues({
             name: data.name ?? '',
-            address: data.address ?? '',
             contact: data.contact ?? '',
+            email: (data as Record<string, unknown>).email as string ?? '',
+            phone: (data as Record<string, unknown>).phone as string ?? '',
+            address: data.address ?? '',
           })
         }
         setLoading(false)
       })
   }, [id])
 
-  function handleChange(
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) {
+  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) {
     const { name, value } = e.target
     setValues((prev) => ({ ...prev, [name]: value }))
     if (name === 'name' && nameError) setNameError(null)
@@ -70,8 +71,10 @@ export default function CustomerForm() {
       id: id ?? crypto.randomUUID(),
       tenant_id: profile.tenant_id,
       name: values.name.trim(),
-      address: values.address.trim() || null,
       contact: values.contact.trim() || null,
+      email: values.email.trim() || null,
+      phone: values.phone.trim() || null,
+      address: values.address.trim() || null,
     }
 
     const { error } = await supabase.from('customers').upsert(record)
@@ -90,7 +93,6 @@ export default function CustomerForm() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-      {/* Back + title */}
       <div className="flex items-center gap-3">
         <button
           onClick={() => navigate(-1)}
@@ -104,10 +106,9 @@ export default function CustomerForm() {
         </h1>
       </div>
 
-      {/* Loading state */}
       {loading && (
         <div className="space-y-3">
-          {[...Array(3)].map((_, i) => (
+          {[...Array(5)].map((_, i) => (
             <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />
           ))}
         </div>
@@ -115,15 +116,13 @@ export default function CustomerForm() {
 
       {!loading && (
         <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+          {/* Company info */}
           <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-              Customer Details
-            </h2>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Company</h2>
 
-            {/* Name */}
             <div className="space-y-1">
               <label className="block text-sm font-medium text-gray-700">
-                Name <span className="text-red-500">*</span>
+                Company Name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
@@ -134,16 +133,11 @@ export default function CustomerForm() {
                 placeholder="Acme Industries"
                 autoFocus
               />
-              {nameError && (
-                <p className="text-sm text-red-600">{nameError}</p>
-              )}
+              {nameError && <p className="text-sm text-red-600">{nameError}</p>}
             </div>
 
-            {/* Address */}
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">
-                Address
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Address</label>
               <textarea
                 name="address"
                 value={values.address}
@@ -153,34 +147,54 @@ export default function CustomerForm() {
                 placeholder="123 Main St, Springfield, ON"
               />
             </div>
+          </div>
 
-            {/* Contact */}
+          {/* Contact info */}
+          <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Contact</h2>
+
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-gray-700">
-                Contact
-              </label>
+              <label className="block text-sm font-medium text-gray-700">Contact Person</label>
               <input
                 type="text"
                 name="contact"
                 value={values.contact}
                 onChange={handleChange}
                 className={inputClass}
-                placeholder="Jane Smith — jane@acme.com — 555-0100"
+                placeholder="Jane Smith"
               />
-              <p className="text-xs text-gray-400">
-                Phone, email, or contact person — any format
-              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-gray-700">Email</label>
+                <input
+                  type="email"
+                  name="email"
+                  value={values.email}
+                  onChange={handleChange}
+                  className={inputClass}
+                  placeholder="jane@acme.com"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-sm font-medium text-gray-700">Phone</label>
+                <input
+                  type="tel"
+                  name="phone"
+                  value={values.phone}
+                  onChange={handleChange}
+                  className={inputClass}
+                  placeholder="555-0100"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Submit error */}
           {submitError && (
-            <p className="text-sm text-red-600">
-              {submitError}
-            </p>
+            <p className="text-sm text-red-600">{submitError}</p>
           )}
 
-          {/* Actions */}
           <div className="flex gap-3">
             <button
               type="button"

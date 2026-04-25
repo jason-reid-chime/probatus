@@ -10,6 +10,8 @@ interface Customer {
   name: string
   address: string | null
   contact: string | null
+  email: string | null
+  phone: string | null
   created_at: string
   assets: { count: number }[]
 }
@@ -199,7 +201,12 @@ export default function CustomersList() {
                       {c.address ?? <span className="text-gray-400 italic">—</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-600 hidden md:table-cell">
-                      {c.contact ?? <span className="text-gray-400 italic">—</span>}
+                      <div className="space-y-0.5">
+                        {c.contact && <div className="text-sm">{c.contact}</div>}
+                        {c.email && <div className="text-xs text-gray-500">{c.email}</div>}
+                        {c.phone && <div className="text-xs text-gray-500">{c.phone}</div>}
+                        {!c.contact && !c.email && !c.phone && <span className="text-gray-400 italic">—</span>}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
