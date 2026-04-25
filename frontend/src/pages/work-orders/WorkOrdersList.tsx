@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Briefcase, Plus } from 'lucide-react'
+import { Briefcase, Plus, Search, X } from 'lucide-react'
 import { useWorkOrders, type WorkOrder } from '../../hooks/useWorkOrders'
 import { useAuth } from '../../hooks/useAuth'
 
@@ -75,12 +75,15 @@ export default function WorkOrdersList() {
   const { profile } = useAuth()
   const { data: workOrders, isLoading } = useWorkOrders()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [search, setSearch] = useState('')
 
   const canCreate = profile?.role === 'supervisor' || profile?.role === 'admin'
 
-  const filtered = (workOrders ?? []).filter(
-    (wo) => statusFilter === 'all' || wo.status === statusFilter,
-  )
+  const filtered = (workOrders ?? []).filter((wo) => {
+    if (statusFilter !== 'all' && wo.status !== statusFilter) return false
+    if (search && !wo.title.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -100,6 +103,22 @@ export default function WorkOrdersList() {
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
+        <div className="relative mb-4">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="search"
+            placeholder="Search by title..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
         <div className="mb-6 flex flex-wrap gap-2">
           {STATUS_PILLS.map(({ value, label }) => (
             <button
@@ -137,14 +156,14 @@ export default function WorkOrdersList() {
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
             <Briefcase size={48} className="mb-4 text-gray-300" />
             <h2 className="mb-1 text-xl font-semibold text-gray-700">
-              {statusFilter !== 'all' ? 'No work orders match this filter' : 'No work orders yet'}
+              {statusFilter !== 'all' || search ? 'No work orders match your filters' : 'No work orders yet'}
             </h2>
             <p className="mb-6 text-base text-gray-500">
-              {statusFilter !== 'all'
-                ? 'Try selecting a different status.'
+              {statusFilter !== 'all' || search
+                ? 'Try adjusting your search or status filter.'
                 : 'Create your first work order to get started.'}
             </p>
-            {canCreate && statusFilter === 'all' && (
+            {canCreate && statusFilter === 'all' && !search && (
               <Link
                 to="/work-orders/new"
                 className="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-6 text-base font-medium text-white hover:bg-brand-700 active:opacity-80"

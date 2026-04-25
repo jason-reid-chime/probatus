@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, AlertTriangle, Clock, Shield, Pencil, Trash2 } from 'lucide-react'
+import { Plus, AlertTriangle, Clock, Shield, Pencil, Trash2, Search, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { useStandards, useDeleteStandard } from '../../hooks/useStandards'
@@ -54,12 +54,23 @@ function StatusBadge({ standard }: { standard: MasterStandard }) {
   )
 }
 
+type StatusPill = 'all' | 'valid' | 'due-soon' | 'overdue'
+
+const STATUS_PILLS: { value: StatusPill; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'valid', label: 'Valid' },
+  { value: 'due-soon', label: 'Due Soon' },
+  { value: 'overdue', label: 'Overdue' },
+]
+
 export default function StandardsList() {
   const navigate = useNavigate()
   const { profile } = useAuth()
   const { data: standards = [], isLoading } = useStandards()
   const deleteMutation = useDeleteStandard()
   const calibrationCounts = useCalibrationCounts()
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusPill>('all')
 
   if (profile?.role === 'technician') {
     navigate('/', { replace: true })
@@ -71,6 +82,20 @@ export default function StandardsList() {
     const bExp = isStandardExpired(b) ? 0 : 1
     if (aExp !== bExp) return aExp - bExp
     return a.due_at.localeCompare(b.due_at)
+  })
+
+  const displayed = sorted.filter((s) => {
+    if (search) {
+      const q = search.toLowerCase()
+      if (
+        !s.name.toLowerCase().includes(q) &&
+        !(s.serial_number ?? '').toLowerCase().includes(q)
+      ) return false
+    }
+    if (statusFilter === 'overdue' && !isStandardExpired(s)) return false
+    if (statusFilter === 'due-soon' && (isStandardExpired(s) || !isStandardDueSoon(s, 30))) return false
+    if (statusFilter === 'valid' && (isStandardExpired(s) || isStandardDueSoon(s, 30))) return false
+    return true
   })
 
   async function handleDelete(id: string, name: string) {
@@ -95,6 +120,41 @@ export default function StandardsList() {
         </Link>
       </div>
 
+      <div className="space-y-3">
+        <div className="relative">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input
+            type="search"
+            placeholder="Search by name or serial number..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {STATUS_PILLS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setStatusFilter(value)}
+              className={[
+                'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                statusFilter === value
+                  ? 'bg-brand-500 text-white'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {isLoading && (
         <div className="space-y-3">
           {[...Array(3)].map((_, i) => (
@@ -103,15 +163,19 @@ export default function StandardsList() {
         </div>
       )}
 
-      {!isLoading && sorted.length === 0 && (
+      {!isLoading && displayed.length === 0 && (
         <div className="text-center py-16 text-gray-400">
           <Shield size={40} className="mx-auto mb-3 opacity-40" />
-          <p className="font-medium">No master standards yet</p>
-          <p className="text-sm mt-1">Add the test equipment your technicians use</p>
+          <p className="font-medium">
+            {search || statusFilter !== 'all' ? 'No standards match your filters' : 'No master standards yet'}
+          </p>
+          <p className="text-sm mt-1">
+            {search || statusFilter !== 'all' ? 'Try adjusting your search or filter.' : 'Add the test equipment your technicians use'}
+          </p>
         </div>
       )}
 
-      {!isLoading && sorted.length > 0 && (
+      {!isLoading && displayed.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left">
@@ -126,7 +190,7 @@ export default function StandardsList() {
               </tr>
             </thead>
             <tbody>
-              {sorted.map((s) => (
+              {displayed.map((s) => (
                 <tr
                   key={s.id}
                   className={`border-t border-gray-100 ${isStandardExpired(s) ? 'bg-red-50' : isStandardDueSoon(s, 30) ? 'bg-amber-50' : ''}`}

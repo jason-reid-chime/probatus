@@ -9,6 +9,7 @@ vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => mockNavigate,
 }))
+vi.mock('../../hooks/useAuth', () => ({ useAuth: vi.fn() }))
 vi.mock('../../hooks/useAssets', () => ({ useAsset: vi.fn() }))
 vi.mock('../../hooks/useCalibration', () => ({ useCalibrationsByAsset: vi.fn() }))
 vi.mock('../../lib/supabase', () => {
@@ -32,6 +33,7 @@ vi.mock('../../lib/supabase', () => {
   }
 })
 
+import { useAuth } from '../../hooks/useAuth'
 import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
 import AssetDetail from './AssetDetail'
@@ -68,6 +70,7 @@ const sampleCal = {
 describe('AssetDetail', () => {
   beforeEach(() => {
     mockNavigate.mockReset()
+    vi.mocked(useAuth).mockReturnValue({ profile: { id: 'u1', role: 'supervisor', tenant_id: 't1', full_name: 'Sue' } } as never)
     vi.mocked(useCalibrationsByAsset).mockReturnValue({ data: [], isLoading: false } as never)
   })
 

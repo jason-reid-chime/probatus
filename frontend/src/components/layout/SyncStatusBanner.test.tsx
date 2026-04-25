@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import SyncStatusBanner from './SyncStatusBanner'
 
 vi.mock('../../hooks/useOutboxCount')
-vi.mock('../../lib/sync/outbox', () => ({ retryFailed: vi.fn() }))
+vi.mock('../../lib/sync/outbox', () => ({ retryFailed: vi.fn(), flushOutbox: vi.fn().mockResolvedValue(undefined) }))
 
 import { useOutboxCount } from '../../hooks/useOutboxCount'
 import { retryFailed } from '../../lib/sync/outbox'
@@ -26,17 +26,13 @@ describe('SyncStatusBanner', () => {
   it('shows singular pending message', () => {
     vi.mocked(useOutboxCount).mockReturnValue(onePending)
     render(<SyncStatusBanner />)
-    expect(screen.getByRole('status')).toHaveTextContent(
-      '1 change saved offline — will sync when connected',
-    )
+    expect(screen.getByRole('status')).toHaveTextContent('1 change pending sync')
   })
 
   it('shows plural pending message', () => {
     vi.mocked(useOutboxCount).mockReturnValue(fivePending)
     render(<SyncStatusBanner />)
-    expect(screen.getByRole('status')).toHaveTextContent(
-      '5 changes saved offline — will sync when connected',
-    )
+    expect(screen.getByRole('status')).toHaveTextContent('5 changes pending sync')
   })
 
   it('pending banner has aria-live="polite"', () => {

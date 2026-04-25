@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, Building2, Pencil, Trash2, Loader2 } from 'lucide-react'
+import { Plus, Building2, Pencil, Trash2, Loader2, Search, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
 
@@ -19,6 +19,7 @@ export default function CustomersList() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   // Delete modal state
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null)
@@ -41,6 +42,10 @@ export default function CustomersList() {
         setLoading(false)
       })
   }, [profile?.tenant_id])
+
+  const filteredCustomers = search
+    ? customers.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
+    : customers
 
   function openDeleteModal(customer: Customer) {
     setDeletingCustomer(customer)
@@ -118,6 +123,22 @@ export default function CustomersList() {
         </Link>
       </div>
 
+      <div className="relative">
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        <input
+          type="search"
+          placeholder="Search customers..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-full pl-9 pr-8 py-2 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
       {/* Loading skeletons */}
       {loading && (
         <div className="space-y-3">
@@ -135,24 +156,28 @@ export default function CustomersList() {
       )}
 
       {/* Empty state */}
-      {!loading && !error && customers.length === 0 && (
+      {!loading && !error && filteredCustomers.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
           <Building2 size={48} className="mb-4 text-gray-300" />
-          <h2 className="mb-1 text-xl font-semibold text-gray-700">No customers yet</h2>
+          <h2 className="mb-1 text-xl font-semibold text-gray-700">
+            {search ? 'No customers match your search' : 'No customers yet'}
+          </h2>
           <p className="mb-6 text-base text-gray-500">
-            Add your first customer to associate them with assets.
+            {search ? 'Try a different name.' : 'Add your first customer to associate them with assets.'}
           </p>
-          <Link
-            to="/customers/new"
-            className="inline-flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
-          >
-            <Plus size={16} /> Add First Customer
-          </Link>
+          {!search && (
+            <Link
+              to="/customers/new"
+              className="inline-flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors"
+            >
+              <Plus size={16} /> Add First Customer
+            </Link>
+          )}
         </div>
       )}
 
       {/* Table */}
-      {!loading && !error && customers.length > 0 && (
+      {!loading && !error && filteredCustomers.length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-left">
@@ -165,7 +190,7 @@ export default function CustomersList() {
               </tr>
             </thead>
             <tbody>
-              {customers.map((c) => {
+              {filteredCustomers.map((c) => {
                 const assetCount = c.assets?.[0]?.count ?? 0
                 return (
                   <tr key={c.id} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">

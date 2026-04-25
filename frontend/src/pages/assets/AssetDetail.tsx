@@ -18,10 +18,12 @@ import {
   Loader2,
   ExternalLink,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../hooks/useAuth'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -146,12 +148,19 @@ interface StandardsUsedRow {
 export default function AssetDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { profile } = useAuth()
   const { data: asset, isLoading, isError } = useAsset(id ?? '')
   const { data: calibrations = [] } = useCalibrationsByAsset(id ?? '')
 
   const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null)
   const [techNames, setTechNames] = useState<Record<string, string>>({})
   const [standards, setStandards] = useState<MasterStandard[]>([])
+
+  const [deletingAsset, setDeletingAsset] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const canManage = profile?.role === 'supervisor' || profile?.role === 'admin'
 
   // Fetch customer
   useEffect(() => {
@@ -248,6 +257,36 @@ export default function AssetDetail() {
         ).toISOString().slice(0, 10)
       : undefined)
 
+  async function handleConfirmDelete() {
+    if (!asset) return
+    setDeleteLoading(true)
+    setDeleteError(null)
+
+    const { error: calErr } = await supabase
+      .from('calibration_records')
+      .delete()
+      .eq('asset_id', asset.id)
+
+    if (calErr) {
+      setDeleteError(calErr.message)
+      setDeleteLoading(false)
+      return
+    }
+
+    const { error: assetErr } = await supabase
+      .from('assets')
+      .delete()
+      .eq('id', asset.id)
+
+    if (assetErr) {
+      setDeleteError(assetErr.message)
+      setDeleteLoading(false)
+      return
+    }
+
+    navigate('/assets')
+  }
+
   const status = getStatus(nextDueAt)
   const { label: statusLabel, className: statusClass } = STATUS_CONFIG[status]
 
@@ -276,13 +315,24 @@ export default function AssetDetail() {
               {INSTRUMENT_LABELS[asset.instrument_type] ?? asset.instrument_type}
             </p>
           </div>
-          <Link
-            to={`/assets/${asset.id}/edit`}
-            className="flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:bg-gray-100"
-          >
-            <Edit2 size={18} />
-            <span className="hidden sm:inline">Edit</span>
-          </Link>
+          {canManage && (
+            <>
+              <Link
+                to={`/assets/${asset.id}/edit`}
+                className="flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:bg-gray-100"
+              >
+                <Edit2 size={18} />
+                <span className="hidden sm:inline">Edit</span>
+              </Link>
+              <button
+                onClick={() => setDeletingAsset(true)}
+                className="flex h-11 items-center gap-2 rounded-xl bg-red-600 hover:bg-red-700 px-4 text-base font-medium text-white shadow-sm active:opacity-80"
+              >
+                <Trash2 size={18} />
+                <span className="hidden sm:inline">Delete</span>
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -454,6 +504,49 @@ export default function AssetDetail() {
           </div>
         )}
       </main>
+
+      {deletingAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
+            <div className="px-6 pt-6 pb-2">
+              <h2 className="text-lg font-semibold text-gray-900">Delete Asset?</h2>
+              <p className="mt-2 text-sm text-gray-600">
+                This will permanently remove <span className="font-medium">{asset.tag_id}</span> and
+                all of its calibration records. This action cannot be undone.
+              </p>
+              {deleteError && (
+                <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+                  {deleteError}
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3 px-6 py-4">
+              <button
+                onClick={() => {
+                  setDeletingAsset(false)
+                  setDeleteError(null)
+                }}
+                disabled={deleteLoading}
+                className="flex flex-1 items-center justify-center rounded-xl border border-gray-200 py-3 text-base font-medium text-gray-700 hover:bg-gray-50 active:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleteLoading}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-red-600 hover:bg-red-700 py-3 text-base font-medium text-white disabled:opacity-50"
+              >
+                {deleteLoading ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Trash2 size={18} />
+                )}
+                {deleteLoading ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

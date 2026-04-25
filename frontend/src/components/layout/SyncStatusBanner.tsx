@@ -1,5 +1,5 @@
 import { useOutboxCount } from '../../hooks/useOutboxCount'
-import { retryFailed } from '../../lib/sync/outbox'
+import { retryFailed, flushOutbox } from '../../lib/sync/outbox'
 
 /**
  * Shows an amber banner while changes are pending sync, and a red banner
@@ -37,10 +37,18 @@ export default function SyncStatusBanner() {
       <div
         role="status"
         aria-live="polite"
-        className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-sm text-amber-800"
+        className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-2 text-sm text-amber-800"
       >
-        <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-        {label} saved offline — will sync when connected
+        <span className="flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          {label} pending sync
+        </span>
+        <button
+          onClick={() => flushOutbox().catch(console.error)}
+          className="text-xs font-semibold underline underline-offset-2 hover:text-amber-900"
+        >
+          Sync now
+        </button>
       </div>
     )
   }

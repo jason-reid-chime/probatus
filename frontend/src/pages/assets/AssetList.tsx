@@ -189,12 +189,24 @@ function AssetRow({ asset }: { asset: LocalAsset }) {
 // ---------------------------------------------------------------------------
 // AssetList page
 // ---------------------------------------------------------------------------
+type InstrumentTypeFilter = '' | 'pressure' | 'temperature' | 'ph_conductivity' | 'level_4_20ma' | 'other'
+
+const INSTRUMENT_PILLS: { value: InstrumentTypeFilter; label: string }[] = [
+  { value: '', label: 'All' },
+  { value: 'pressure', label: 'Pressure' },
+  { value: 'temperature', label: 'Temperature' },
+  { value: 'ph_conductivity', label: 'pH/Conductivity' },
+  { value: 'level_4_20ma', label: 'Level 4-20mA' },
+  { value: 'other', label: 'Other' },
+]
+
 export default function AssetList() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialSearch = searchParams.get('tag') ?? ''
   const [search, setSearch] = useState(initialSearch)
   const [serialSearch, setSerialSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState<InstrumentTypeFilter>('')
   const [scannerOpen, setScannerOpen] = useState(false)
 
   const { data: assets, isLoading, isError } = useAssets()
@@ -218,10 +230,10 @@ export default function AssetList() {
   )
 
   const filtered = (assets ?? []).filter((a) => {
-    // Customer filter
     if (selectedCustomerId && a.customer_id !== selectedCustomerId) return false
 
-    // Tag / make / model search (existing)
+    if (typeFilter && a.instrument_type !== typeFilter) return false
+
     if (search) {
       const q = search.toLowerCase()
       const matchesTag =
@@ -231,7 +243,6 @@ export default function AssetList() {
       if (!matchesTag) return false
     }
 
-    // Serial number search (Task 8)
     if (serialSearch) {
       const sq = serialSearch.toLowerCase()
       if (!(a.serial_number ?? '').toLowerCase().includes(sq)) return false
@@ -291,7 +302,25 @@ export default function AssetList() {
           )}
         </div>
 
-        {/* Search by serial number (Task 8) */}
+        {/* Instrument type filter */}
+        <div className="mb-3 flex flex-wrap gap-2">
+          {INSTRUMENT_PILLS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => setTypeFilter(value)}
+              className={[
+                'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                typeFilter === value
+                  ? 'bg-brand-500 text-white'
+                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50',
+              ].join(' ')}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search by serial number */}
         <div className="relative mb-6">
           <Search
             size={18}
@@ -345,16 +374,16 @@ export default function AssetList() {
           <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-white py-16 text-center">
             <ClipboardList size={48} className="mb-4 text-gray-300" />
             <h2 className="mb-1 text-xl font-semibold text-gray-700">
-              {search || serialSearch || selectedCustomerId
+              {search || serialSearch || selectedCustomerId || typeFilter
                 ? 'No assets match your filters'
                 : 'No assets yet'}
             </h2>
             <p className="mb-6 text-base text-gray-500">
-              {search || serialSearch || selectedCustomerId
+              {search || serialSearch || selectedCustomerId || typeFilter
                 ? 'Try adjusting your search or client filter.'
                 : 'Add your first asset to start tracking calibrations.'}
             </p>
-            {!search && !serialSearch && !selectedCustomerId && (
+            {!search && !serialSearch && !selectedCustomerId && !typeFilter && (
               <Link
                 to="/assets/new"
                 className="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-6 text-base font-medium text-white hover:bg-brand-700 active:opacity-80"
