@@ -3,6 +3,11 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from './useAuth'
 import { useCustomerFilter } from './useCustomerFilter'
 
+export interface Technician {
+  id: string
+  full_name: string
+}
+
 export interface WorkOrder {
   id: string
   tenant_id: string
@@ -16,6 +21,8 @@ export interface WorkOrder {
   updated_at: string
   customer?: { name: string } | null
   work_order_assets?: { count: number }[]
+  work_order_technicians?: { count: number }[]
+  technicians?: Technician[]
 }
 
 export interface WorkOrderWithAssets extends WorkOrder {
@@ -27,6 +34,7 @@ export interface WorkOrderWithAssets extends WorkOrder {
     manufacturer: string | null
     model: string | null
   }[]
+  technicians: Technician[]
 }
 
 const workOrderKeys = {
@@ -38,18 +46,25 @@ export function useWorkOrders() {
   const { profile } = useAuth()
   const { selectedCustomerId } = useCustomerFilter()
   const tenantId = profile?.tenant_id ?? ''
+  const userId = profile?.id ?? ''
+  const role = profile?.role ?? ''
 
   return useQuery({
-    queryKey: [...workOrderKeys.all(tenantId), selectedCustomerId],
+    queryKey: [...workOrderKeys.all(tenantId), selectedCustomerId, userId],
     queryFn: async (): Promise<WorkOrder[]> => {
       let query = supabase
         .from('work_orders')
-        .select('*, customer:customers(name), work_order_assets(count)')
+        .select('*, customer:customers(name), work_order_assets(count), work_order_technicians(count)')
         .eq('tenant_id', tenantId)
         .order('scheduled_date', { ascending: false })
 
       if (selectedCustomerId) {
         query = query.eq('customer_id', selectedCustomerId)
+      }
+
+      // Technicians only see work orders they're assigned to
+      if (role === 'technician') {
+        query = query.eq('work_order_technicians.technician_id', userId)
       }
 
       const { data, error } = await query
@@ -75,6 +90,9 @@ export function useWorkOrder(id: string) {
           customer:customers(name),
           work_order_assets(
             asset:assets(id, tag_id, instrument_type, serial_number, manufacturer, model)
+          ),
+          work_order_technicians(
+            technician:profiles(id, full_name)
           )
         `)
         .eq('id', id)
@@ -84,10 +102,13 @@ export function useWorkOrder(id: string) {
       if (!data) return null
 
       type AssetRow = WorkOrderWithAssets['assets'][number]
-      const rawJoin = (data as unknown as { work_order_assets: { asset: AssetRow | null }[] }).work_order_assets ?? []
-      const assets = rawJoin.map((woa) => woa.asset).filter((a): a is AssetRow => a !== null)
+      const rawAssets = (data as unknown as { work_order_assets: { asset: AssetRow | null }[] }).work_order_assets ?? []
+      const assets = rawAssets.map((woa) => woa.asset).filter((a): a is AssetRow => a !== null)
 
-      return { ...data, assets } as WorkOrderWithAssets
+      const rawTechs = (data as unknown as { work_order_technicians: { technician: Technician | null }[] }).work_order_technicians ?? []
+      const technicians = rawTechs.map((wot) => wot.technician).filter((t): t is Technician => t !== null)
+
+      return { ...data, assets, technicians } as WorkOrderWithAssets
     },
     enabled: !!tenantId && !!id,
     staleTime: 1000 * 60 * 5,
@@ -103,9 +124,11 @@ export function useUpsertWorkOrder() {
     mutationFn: async ({
       workOrder,
       assetIds,
+      technicianIds,
     }: {
       workOrder: Partial<WorkOrder> & { title: string; scheduled_date: string }
       assetIds: string[]
+      technicianIds: string[]
     }) => {
       const id = workOrder.id ?? crypto.randomUUID()
 
@@ -123,16 +146,30 @@ export function useUpsertWorkOrder() {
       const { error: upsertError } = await supabase.from('work_orders').upsert(record)
       if (upsertError) throw upsertError
 
-      const { error: deleteError } = await supabase
+      // Replace assets
+      const { error: deleteAssetsError } = await supabase
         .from('work_order_assets')
         .delete()
         .eq('work_order_id', id)
-      if (deleteError) throw deleteError
+      if (deleteAssetsError) throw deleteAssetsError
 
       if (assetIds.length > 0) {
         const rows = assetIds.map((assetId) => ({ work_order_id: id, asset_id: assetId }))
         const { error: insertError } = await supabase.from('work_order_assets').insert(rows)
         if (insertError) throw insertError
+      }
+
+      // Replace technicians
+      const { error: deleteTechsError } = await supabase
+        .from('work_order_technicians')
+        .delete()
+        .eq('work_order_id', id)
+      if (deleteTechsError) throw deleteTechsError
+
+      if (technicianIds.length > 0) {
+        const rows = technicianIds.map((technician_id) => ({ work_order_id: id, technician_id }))
+        const { error: insertTechError } = await supabase.from('work_order_technicians').insert(rows)
+        if (insertTechError) throw insertTechError
       }
 
       return id
@@ -150,17 +187,32 @@ export function useDeleteWorkOrder() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error: deleteAssetsError } = await supabase
-        .from('work_order_assets')
-        .delete()
-        .eq('work_order_id', id)
-      if (deleteAssetsError) throw deleteAssetsError
-
+      // ON DELETE CASCADE handles work_order_assets and work_order_technicians
       const { error } = await supabase.from('work_orders').delete().eq('id', id)
       if (error) throw error
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: workOrderKeys.all(tenantId) })
     },
+  })
+}
+
+export function useTenantProfiles() {
+  const { profile } = useAuth()
+  const tenantId = profile?.tenant_id ?? ''
+
+  return useQuery({
+    queryKey: ['profiles', tenantId],
+    queryFn: async (): Promise<Technician[]> => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('tenant_id', tenantId)
+        .order('full_name')
+      if (error) throw error
+      return (data ?? []) as Technician[]
+    },
+    enabled: !!tenantId,
+    staleTime: 1000 * 60 * 10,
   })
 }

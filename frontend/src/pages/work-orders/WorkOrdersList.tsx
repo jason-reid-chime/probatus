@@ -44,6 +44,7 @@ function SkeletonRow() {
 function WorkOrderRow({ wo }: { wo: WorkOrder }) {
   const navigate = useNavigate()
   const assetCount = wo.work_order_assets?.[0]?.count ?? 0
+  const techCount = wo.work_order_technicians?.[0]?.count ?? 0
 
   return (
     <button
@@ -64,8 +65,16 @@ function WorkOrderRow({ wo }: { wo: WorkOrder }) {
       >
         {STATUS_LABEL[wo.status] ?? wo.status}
       </span>
-      <span className="hidden sm:block flex-shrink-0 text-sm text-gray-500">
-        {assetCount} asset{assetCount !== 1 ? 's' : ''}
+      <span className="hidden sm:flex flex-shrink-0 items-center gap-3 text-sm text-gray-500">
+        <span>{assetCount} asset{assetCount !== 1 ? 's' : ''}</span>
+        {techCount > 0 && (
+          <span className="inline-flex items-center gap-1 text-indigo-600">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            {techCount}
+          </span>
+        )}
       </span>
     </button>
   )
@@ -77,6 +86,7 @@ export default function WorkOrdersList() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [search, setSearch] = useState('')
 
+  const isTechnician = profile?.role === 'technician'
   const canCreate = profile?.role === 'supervisor' || profile?.role === 'admin'
 
   const filtered = (workOrders ?? []).filter((wo) => {
@@ -103,6 +113,12 @@ export default function WorkOrdersList() {
       </header>
 
       <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
+        {isTechnician && (
+          <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+            Showing work orders assigned to you. Contact a supervisor to be added to others.
+          </div>
+        )}
+
         <div className="relative mb-4">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
           <input

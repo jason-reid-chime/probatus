@@ -23,6 +23,7 @@ import {
 import { useAsset } from '../../hooks/useAssets'
 import { useCalibrationsByAsset } from '../../hooks/useCalibration'
 import { supabase } from '../../lib/supabase'
+import { apiRequest } from '../../lib/api/client'
 import { useAuth } from '../../hooks/useAuth'
 import type { LocalMeasurement } from '../../lib/db'
 import DriftChart from '../../components/calibrations/DriftChart'
@@ -285,29 +286,13 @@ export default function AssetDetail() {
     setDeleteLoading(true)
     setDeleteError(null)
 
-    const { error: calErr } = await supabase
-      .from('calibration_records')
-      .delete()
-      .eq('asset_id', asset.id)
-
-    if (calErr) {
-      setDeleteError(calErr.message)
+    try {
+      await apiRequest('DELETE', `/assets/${asset.id}`)
+      navigate('/assets')
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete asset')
       setDeleteLoading(false)
-      return
     }
-
-    const { error: assetErr } = await supabase
-      .from('assets')
-      .delete()
-      .eq('id', asset.id)
-
-    if (assetErr) {
-      setDeleteError(assetErr.message)
-      setDeleteLoading(false)
-      return
-    }
-
-    navigate('/assets')
   }
 
   const status = getStatus(nextDueAt)

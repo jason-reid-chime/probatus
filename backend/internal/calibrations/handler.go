@@ -476,6 +476,188 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})
 }
 
+// Reject sets a calibration's status to "rejected" and records the reason.
+func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	role := middleware.RoleFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	if role != "supervisor" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only supervisors and admins can reject calibrations")
+		return
+	}
+
+	var body struct {
+		RejectionReason string `json:"rejection_reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	row := h.pool.QueryRow(r.Context(),
+		`UPDATE calibration_records
+		 SET status = 'rejected', rejection_reason = $1, updated_at = now()
+		 WHERE id = $2 AND tenant_id = $3
+		 RETURNING id::text, tenant_id::text, asset_id::text, technician_id::text,
+		           supervisor_id::text, status, performed_at, approved_at,
+		           sales_number, flag_number, tech_signature, supervisor_signature,
+		           certificate_url, notes, local_id`,
+		body.RejectionReason, id, tenantID,
+	)
+
+	rec := &CalibrationRecord{}
+	err := row.Scan(
+		&rec.ID, &rec.TenantID, &rec.AssetID, &rec.TechnicianID,
+		&rec.SupervisorID, &rec.Status, &rec.PerformedAt, &rec.ApprovedAt,
+		&rec.SalesNumber, &rec.FlagNumber, &rec.TechSignature, &rec.SupervisorSig,
+		&rec.CertificateURL, &rec.Notes, &rec.LocalID,
+	)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "calibration not found")
+		return
+	}
+	if err != nil {
+		slog.Error("calibrations.Reject: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to reject calibration")
+		return
+	}
+
+	slog.Info("calibrations.Reject: record rejected", "record_id", id, "tenant_id", tenantID)
+	writeJSON(w, http.StatusOK, rec)
+}
+
+// Reopen sets a rejected calibration back to "in_progress" for rework.
+func (h *Handler) Reopen(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE calibration_records
+		 SET status = 'in_progress', rejection_reason = NULL, updated_at = now()
+		 WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID,
+	)
+	if err != nil {
+		slog.Error("calibrations.Reopen: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to reopen calibration")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "calibration not found")
+		return
+	}
+
+	slog.Info("calibrations.Reopen: record reopened", "record_id", id, "tenant_id", tenantID)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// Delete removes a calibration record (ON DELETE CASCADE handles child rows).
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	role := middleware.RoleFromCtx(r.Context())
+	id := chi.URLParam(r, "id")
+
+	if role != "supervisor" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only supervisors and admins can delete calibrations")
+		return
+	}
+
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM calibration_records WHERE id = $1 AND tenant_id = $2`,
+		id, tenantID,
+	)
+	if err != nil {
+		slog.Error("calibrations.Delete: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete calibration")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "calibration not found")
+		return
+	}
+
+	slog.Info("calibrations.Delete: record deleted", "record_id", id, "tenant_id", tenantID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// BulkApprove approves multiple calibrations that are in pending_approval status.
+func (h *Handler) BulkApprove(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	userID := middleware.UserIDFromCtx(r.Context())
+	role := middleware.RoleFromCtx(r.Context())
+
+	if role != "supervisor" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only supervisors and admins can bulk approve calibrations")
+		return
+	}
+
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.IDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]int{"approved": 0})
+		return
+	}
+
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE calibration_records
+		 SET status = 'approved', approved_at = now(), supervisor_id = $1, updated_at = now()
+		 WHERE id = ANY($2::uuid[]) AND tenant_id = $3 AND status = 'pending_approval'`,
+		userID, body.IDs, tenantID,
+	)
+	if err != nil {
+		slog.Error("calibrations.BulkApprove: exec failed", "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
+		return
+	}
+
+	n := int(tag.RowsAffected())
+	slog.Info("calibrations.BulkApprove: records approved", "count", n, "tenant_id", tenantID, "supervisor_id", userID)
+	writeJSON(w, http.StatusOK, map[string]int{"approved": n})
+}
+
+// BulkDelete removes multiple calibration records.
+func (h *Handler) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	tenantID := middleware.TenantIDFromCtx(r.Context())
+	role := middleware.RoleFromCtx(r.Context())
+
+	if role != "supervisor" && role != "admin" {
+		writeError(w, http.StatusForbidden, "only supervisors and admins can bulk delete calibrations")
+		return
+	}
+
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.IDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]int{"deleted": 0})
+		return
+	}
+
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM calibration_records WHERE id = ANY($1::uuid[]) AND tenant_id = $2`,
+		body.IDs, tenantID,
+	)
+	if err != nil {
+		slog.Error("calibrations.BulkDelete: exec failed", "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to bulk delete calibrations")
+		return
+	}
+
+	n := int(tag.RowsAffected())
+	slog.Info("calibrations.BulkDelete: records deleted", "count", n, "tenant_id", tenantID)
+	writeJSON(w, http.StatusOK, map[string]int{"deleted": n})
+}
+
 func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID string) {
 	// Use a detached context so the goroutine is not cancelled when the HTTP
 	// handler's context is done.

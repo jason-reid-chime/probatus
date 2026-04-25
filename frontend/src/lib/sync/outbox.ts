@@ -1,87 +1,60 @@
 import { db, type OutboxEntry } from '../db'
 import { supabase } from '../supabase'
 
+const API_URL = import.meta.env.VITE_API_URL as string
+
 const MAX_RETRIES = 5
 
 /**
  * Flush the outbox — called when connectivity is detected.
  * Processes entries in insertion order (FIFO).
  *
- * Guards against unauthenticated calls: Supabase RLS will reject writes
- * from a session-less client, burning through retries permanently.
+ * Gets a Supabase session JWT and forwards it as Authorization: Bearer <token>
+ * to the Go backend API. Aborts the flush on auth errors to avoid burning retries.
  */
 export async function flushOutbox(): Promise<void> {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) {
-    console.warn('[outbox] flushOutbox aborted — no active session')
+    console.warn('[outbox] aborted — no session')
     return
   }
+  const token = session.access_token
 
   const entries = await db.outbox.orderBy('id').toArray()
-  if (entries.length === 0) {
-    console.debug('[outbox] nothing to flush')
-    return
-  }
-
-  console.log(`[outbox] flushing ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`)
+  if (entries.length === 0) return
 
   for (const entry of entries) {
     if (entry.retries >= MAX_RETRIES) {
-      console.warn(`[outbox] skipping dead entry id=${entry.id} table=${entry.table} op=${entry.operation} retries=${entry.retries}`)
+      console.warn(`[outbox] skipping dead entry id=${entry.id}`)
       continue
     }
-
     try {
-      console.log(`[outbox] processing id=${entry.id} table=${entry.table} op=${entry.operation}`)
-      await processEntry(entry)
+      await processEntry(entry, token)
       await db.outbox.delete(entry.id!)
-      console.log(`[outbox] ✓ id=${entry.id} synced and removed`)
     } catch (err) {
       const msg = String(err)
-      const isAuthError = msg.includes('JWT') || msg.includes('401') || msg.includes('403') || msg.includes('not authenticated')
-      console.error(`[outbox] ✗ id=${entry.id} table=${entry.table} failed: ${msg}`, { isAuthError })
-      if (!isAuthError) {
-        await db.outbox.update(entry.id!, {
-          retries: entry.retries + 1,
-          last_error: msg,
-        })
+      const isAuthError = msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized') || msg.includes('Forbidden')
+      if (isAuthError) {
+        console.warn('[outbox] auth error — aborting flush')
+        return  // abort entire flush, don't burn retries
       }
+      await db.outbox.update(entry.id!, { retries: entry.retries + 1, last_error: msg })
     }
   }
-
-  console.log('[outbox] flush complete')
 }
 
-const CONFLICT_COLUMN: Record<string, string> = {
-  calibration_records:        'id',
-  calibration_measurements:   'id',
-  assets:                     'id',
-  calibration_standards_used: 'record_id,standard_id',
-}
-
-async function processEntry(entry: OutboxEntry): Promise<void> {
-  if (entry.operation === 'upsert') {
-    const onConflict = CONFLICT_COLUMN[entry.table] ?? 'id'
-    const { error } = await supabase
-      .from(entry.table)
-      .upsert(entry.payload, { onConflict })
-    if (error) throw new Error(error.message)
-  } else if (entry.operation === 'delete') {
-    const { error } = await supabase
-      .from(entry.table)
-      .delete()
-      .eq('id', (entry.payload as { id: string }).id)
-    if (error) throw new Error(error.message)
-  } else if (entry.operation === 'replace_standards') {
-    // Offline-safe delete+insert for calibration_standards_used.
-    // Stored as a single outbox entry so the full replacement is atomic on flush.
-    const { record_id, standard_ids } = entry.payload as { record_id: string; standard_ids: string[] }
-    await supabase.from('calibration_standards_used').delete().eq('record_id', record_id)
-    if (standard_ids.length > 0) {
-      const rows = standard_ids.map((standard_id) => ({ record_id, standard_id }))
-      const { error } = await supabase.from('calibration_standards_used').insert(rows)
-      if (error) throw new Error(error.message)
-    }
+async function processEntry(entry: OutboxEntry, token: string): Promise<void> {
+  const res = await fetch(`${API_URL}${entry.url}`, {
+    method: entry.method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: entry.body != null ? JSON.stringify(entry.body) : undefined,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText)
+    throw new Error(`${res.status}: ${text}`)
   }
 }
 
@@ -91,36 +64,17 @@ async function processEntry(entry: OutboxEntry): Promise<void> {
 export async function enqueue(
   entry: Omit<OutboxEntry, 'id' | 'retries' | 'created_at'>
 ): Promise<void> {
-  const id = await db.outbox.add({
-    ...entry,
-    created_at: new Date().toISOString(),
-    retries: 0,
-  })
-  console.debug(`[outbox] enqueued id=${id} table=${entry.table} op=${entry.operation}`)
+  await db.outbox.add({ ...entry, created_at: new Date().toISOString(), retries: 0 })
 }
 
 /**
- * Queue a full standards replacement for a calibration record.
- * Unlike individual upserts, this captures the deletion of removed standards
- * so the offline→online transition produces the correct final state.
+ * @deprecated Standards are now included as part of the calibration create/update
+ * payload sent to the backend. This function is a no-op kept for backwards
+ * compatibility with callers that have not yet been migrated.
  */
-export async function enqueueStandardsReplace(recordId: string, standardIds: string[]): Promise<void> {
-  // Remove any previous pending replace for this record to avoid stale sets
-  const existing = await db.outbox
-    .filter((e) => e.operation === 'replace_standards' && (e.payload['record_id'] as string) === recordId)
-    .toArray()
-  if (existing.length > 0) {
-    await db.outbox.bulkDelete(existing.map((e) => e.id!))
-  }
-
-  const id = await db.outbox.add({
-    table: 'calibration_standards_used',
-    operation: 'replace_standards',
-    payload: { record_id: recordId, standard_ids: standardIds },
-    created_at: new Date().toISOString(),
-    retries: 0,
-  })
-  console.debug(`[outbox] enqueued replace_standards id=${id} record=${recordId} standards=${standardIds.length}`)
+export async function enqueueStandardsReplace(_recordId: string, _standardIds: string[]): Promise<void> {
+  // No-op: the backend handles standards as part of calibration create/update body.
+  // Callers should pass standard_ids in the calibration enqueue body instead.
 }
 
 /**

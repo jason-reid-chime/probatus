@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Plus, Building2, Pencil, Trash2, Loader2, Search, X } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
+import { apiRequest } from '../../lib/api/client'
 
 interface Customer {
   id: string
@@ -65,38 +66,11 @@ export default function CustomersList() {
     setDeleteLoading(true)
     setDeleteError(null)
 
-    // Step 1: unlink profiles (portal users) that reference this customer
-    const { error: profileErr } = await supabase
-      .from('profiles')
-      .update({ customer_id: null })
-      .eq('customer_id', deletingCustomer.id)
-
-    if (profileErr) {
-      setDeleteError(profileErr.message)
-      setDeleteLoading(false)
-      return
-    }
-
-    // Step 2: unlink assets
-    const { error: unlinkErr } = await supabase
-      .from('assets')
-      .update({ customer_id: null })
-      .eq('customer_id', deletingCustomer.id)
-
-    if (unlinkErr) {
-      setDeleteError(unlinkErr.message)
-      setDeleteLoading(false)
-      return
-    }
-
-    // Step 3: delete the customer
-    const { error: deleteErr } = await supabase
-      .from('customers')
-      .delete()
-      .eq('id', deletingCustomer.id)
-
-    if (deleteErr) {
-      setDeleteError(deleteErr.message)
+    try {
+      // Backend nulls out customer_id on assets before deleting the customer
+      await apiRequest('DELETE', `/customers/${deletingCustomer.id}`)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete customer')
       setDeleteLoading(false)
       return
     }

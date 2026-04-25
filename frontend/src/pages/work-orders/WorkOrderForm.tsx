@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, X, Loader2 } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
-import { useWorkOrder, useUpsertWorkOrder, type WorkOrderWithAssets } from '../../hooks/useWorkOrders'
+import { useWorkOrder, useUpsertWorkOrder, useTenantProfiles, type WorkOrderWithAssets } from '../../hooks/useWorkOrders'
 import { supabase } from '../../lib/supabase'
 
 interface Customer {
@@ -50,16 +50,19 @@ interface InnerFormProps {
   id: string | undefined
   initialValues: FormValues
   initialAssetIds: string[]
+  initialTechnicianIds: string[]
   profile: { tenant_id: string; id: string } | null
   isEdit: boolean
 }
 
-function InnerForm({ id, initialValues, initialAssetIds, profile, isEdit }: InnerFormProps) {
+function InnerForm({ id, initialValues, initialAssetIds, initialTechnicianIds, profile, isEdit }: InnerFormProps) {
   const navigate = useNavigate()
   const upsert = useUpsertWorkOrder()
+  const { data: tenantProfiles = [] } = useTenantProfiles()
 
   const [values, setValues] = useState<FormValues>(initialValues)
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(initialAssetIds)
+  const [selectedTechIds, setSelectedTechIds] = useState<string[]>(initialTechnicianIds)
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [assets, setAssets] = useState<Asset[]>([])
@@ -104,6 +107,12 @@ function InnerForm({ id, initialValues, initialAssetIds, profile, isEdit }: Inne
     )
   }
 
+  function toggleTech(techId: string) {
+    setSelectedTechIds((prev) =>
+      prev.includes(techId) ? prev.filter((i) => i !== techId) : [...prev, techId],
+    )
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitError(null)
@@ -130,6 +139,7 @@ function InnerForm({ id, initialValues, initialAssetIds, profile, isEdit }: Inne
           notes: values.notes.trim() || null,
         },
         assetIds: selectedAssetIds,
+        technicianIds: selectedTechIds,
       })
       navigate('/work-orders')
     } catch (err) {
@@ -163,6 +173,7 @@ function InnerForm({ id, initialValues, initialAssetIds, profile, isEdit }: Inne
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5" noValidate>
+        {/* Details */}
         <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-4">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Details</h2>
 
@@ -229,6 +240,73 @@ function InnerForm({ id, initialValues, initialAssetIds, profile, isEdit }: Inne
           </div>
         </div>
 
+        {/* Technicians */}
+        <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Assigned Technicians
+          </h2>
+
+          {selectedTechIds.length > 0 && (
+            <div className="flex flex-wrap gap-2 pb-2">
+              {selectedTechIds.map((techId) => {
+                const tech = tenantProfiles.find((t) => t.id === techId)
+                if (!tech) return null
+                return (
+                  <span
+                    key={techId}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-sm font-medium text-indigo-700 border border-indigo-200"
+                  >
+                    {tech.full_name}
+                    <button
+                      type="button"
+                      onClick={() => toggleTech(techId)}
+                      className="ml-0.5 text-indigo-400 hover:text-indigo-700"
+                      aria-label={`Remove ${tech.full_name}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </span>
+                )
+              })}
+            </div>
+          )}
+
+          <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+            {tenantProfiles.length === 0 && (
+              <p className="px-4 py-3 text-sm text-gray-400 italic">No team members found</p>
+            )}
+            {tenantProfiles.map((tech) => {
+              const selected = selectedTechIds.includes(tech.id)
+              return (
+                <button
+                  key={tech.id}
+                  type="button"
+                  onClick={() => toggleTech(tech.id)}
+                  className={[
+                    'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors',
+                    selected ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-50',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border',
+                      selected ? 'bg-indigo-500 border-indigo-500' : 'border-gray-300 bg-white',
+                    ].join(' ')}
+                  >
+                    {selected && (
+                      <svg className="h-3 w-3 text-white" viewBox="0 0 12 12" fill="currentColor">
+                        <path d="M10 3L5 8.5 2 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                      </svg>
+                    )}
+                  </span>
+                  <span>{tech.full_name}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Assets */}
         <div className="bg-white rounded-xl border border-gray-200 px-5 py-5 space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Assets</h2>
 
@@ -346,6 +424,7 @@ export default function WorkOrderForm() {
       id={id}
       initialValues={existing ? toFormValues(existing) : emptyForm}
       initialAssetIds={existing?.assets.map((a) => a.id) ?? []}
+      initialTechnicianIds={existing?.technicians.map((t) => t.id) ?? []}
       profile={profile}
       isEdit={isEdit}
     />

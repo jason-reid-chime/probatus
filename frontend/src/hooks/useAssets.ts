@@ -111,9 +111,9 @@ export function useUpsertAsset() {
 
       // 2. Enqueue in outbox for guaranteed sync
       await enqueue({
-        table: 'assets',
-        operation: 'upsert',
-        payload: saved as unknown as Record<string, unknown>,
+        method: 'PUT',
+        url:    `/assets/${saved.id}`,
+        body:   saved as unknown as Record<string, unknown>,
       })
 
       // 3. Opportunistic online sync with 5-second timeout
@@ -130,8 +130,7 @@ export function useUpsertAsset() {
           const synced = await withTimeout(apiUpsertAsset(asset))
           // Remove the outbox entry — already synced
           const entries = await db.outbox
-            .where('table').equals('assets')
-            .and((e) => (e.payload as { id: string }).id === saved.id)
+            .filter((e) => e.url === `/assets/${saved.id}`)
             .toArray()
           if (entries.length > 0) {
             await db.outbox.delete(entries[entries.length - 1].id!)

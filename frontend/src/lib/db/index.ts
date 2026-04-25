@@ -60,16 +60,13 @@ export interface LocalMeasurement {
 }
 
 // -------------------------------------------------------
-// Outbox: queued mutations waiting to sync
+// Outbox: generic HTTP request queue for offline writes
 // -------------------------------------------------------
-export type OutboxOperation = 'upsert' | 'delete' | 'replace_standards'
-export type OutboxTable = 'calibration_records' | 'calibration_measurements' | 'assets' | 'calibration_standards_used'
-
 export interface OutboxEntry {
   id?: number               // auto-increment local PK
-  table: OutboxTable
-  operation: OutboxOperation
-  payload: Record<string, unknown>
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  url: string               // e.g. '/calibrations/abc123'
+  body?: Record<string, unknown>
   created_at: string
   retries: number
   last_error?: string
@@ -87,11 +84,22 @@ class ProbatusDexie extends Dexie {
   constructor() {
     super('probatus')
 
+    this.on('blocked', () => {
+      window.location.reload()
+    })
+
     this.version(1).stores({
       assets:               'id, tenant_id, tag_id, next_due_at',
       calibration_records:  'id, local_id, tenant_id, asset_id, status',
       measurements:         'id, record_id',
       outbox:               '++id, table, created_at',
+    })
+
+    this.version(2).stores({
+      assets:               'id, tenant_id, tag_id, next_due_at',
+      calibration_records:  'id, local_id, tenant_id, asset_id, status, performed_at',
+      measurements:         'id, record_id',
+      outbox:               '++id, method, created_at',
     })
   }
 }

@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Upload, Send, Trash2, Pencil, Loader2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
-import { API_URL } from '../../lib/api/client'
+import { apiRequest, API_URL } from '../../lib/api/client'
 import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
 import { enqueue } from '../../lib/sync/outbox'
@@ -176,10 +176,7 @@ function useSyncStatus(recordId: string) {
 
   useEffect(() => {
     db.outbox
-      .filter((e) => {
-        const payload = e.payload as Record<string, unknown>
-        return e.table === 'calibration_records' && payload['id'] === recordId
-      })
+      .filter((e) => e.url === `/calibrations/${recordId}`)
       .count()
       .then(setPendingCount)
   }, [recordId])
@@ -316,9 +313,9 @@ export default function CalibrationDetail() {
 
       // Enqueue in outbox
       await enqueue({
-        table: 'calibration_records',
-        operation: 'upsert',
-        payload: updated as unknown as Record<string, unknown>,
+        method: 'PUT',
+        url:    `/calibrations/${updated.id}`,
+        body:   updated as unknown as Record<string, unknown>,
       })
 
       // Attempt online update
@@ -361,10 +358,7 @@ export default function CalibrationDetail() {
     setDeleting(true)
     setDeleteError(null)
     try {
-      await supabase.from('calibration_standards_used').delete().eq('record_id', recordId)
-      await supabase.from('calibration_measurements').delete().eq('record_id', recordId)
-      const { error } = await supabase.from('calibration_records').delete().eq('id', recordId)
-      if (error) throw error
+      await apiRequest('DELETE', `/calibrations/${recordId}`)
       await db.measurements.where('record_id').equals(recordId).delete()
       await db.calibration_records.delete(recordId)
       navigate('/calibrations')
@@ -379,6 +373,7 @@ export default function CalibrationDetail() {
     setSavingCertUrl(true)
     try {
       const url = certUrlDraft.trim() || null
+      // TODO: route through backend when a certificate_url endpoint is available
       await supabase.from('calibration_records').update({ certificate_url: url }).eq('id', record.id)
       const updated = { ...record, certificate_url: url ?? undefined }
       await db.calibration_records.put(updated as typeof record)
@@ -403,14 +398,7 @@ export default function CalibrationDetail() {
     setApproving(true)
     setApproveError(null)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('Not authenticated')
-      const res = await fetch(`${API_URL}/calibrations/${recordId}/approve`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ supervisor_signature: profile.full_name }),
-      })
-      if (!res.ok) throw new Error(`Server returned ${res.status}`)
+      await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: profile.full_name })
       // Update Dexie so status persists on next visit
       await db.calibration_records.update(recordId, { status: 'approved' })
       queryClient.setQueryData(calibrationKeys.detail(recordId), (old: LocalCalibrationRecord | undefined) =>
@@ -638,7 +626,7 @@ export default function CalibrationDetail() {
           <button
             type="button"
             onClick={async () => {
-              await supabase.from('calibration_records').update({ status: 'in_progress', rejection_reason: null }).eq('id', recordId)
+              await apiRequest('POST', `/calibrations/${recordId}/reopen`)
               await db.calibration_records.update(recordId!, { status: 'in_progress', rejection_reason: null })
               queryClient.setQueryData(calibrationKeys.detail(recordId!), (old: LocalCalibrationRecord | undefined) =>
                 old ? { ...old, status: 'in_progress', rejection_reason: null } : old

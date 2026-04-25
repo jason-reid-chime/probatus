@@ -4,7 +4,7 @@ import { CheckCircle, ClipboardCheck, RefreshCw, AlertCircle, XCircle } from 'lu
 import { supabase } from '../../lib/supabase'
 import { db } from '../../lib/db'
 import { useAuth } from '../../hooks/useAuth'
-import { API_URL } from '../../lib/api/client'
+import { apiRequest } from '../../lib/api/client'
 
 interface PendingRecord {
   id: string
@@ -117,16 +117,8 @@ export default function ApprovalDashboard() {
     setApproving(recordId)
     setError(null)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const res = await fetch(`${API_URL}/calibrations/${recordId}/approve`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.error ?? `Server error ${res.status}`)
-      }
-      await db.calibration_records.update(recordId, { status: 'approved' })
+      await apiRequest('POST', `/calibrations/${recordId}/approve`)
+      await db.calibration_records.update(recordId, { status: 'approved', approved_at: new Date().toISOString() })
       setRecords((prev) => prev.filter((r) => r.id !== recordId))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Approval failed')
@@ -141,18 +133,15 @@ export default function ApprovalDashboard() {
       return
     }
     setRejectError(null)
-    const { error: err } = await supabase
-      .from('calibration_records')
-      .update({ status: 'rejected', rejection_reason: rejectReason.trim() })
-      .eq('id', recordId)
-    if (err) {
-      setRejectError(err.message)
-      return
+    try {
+      await apiRequest('POST', `/calibrations/${recordId}/reject`, { rejection_reason: rejectReason.trim() })
+      await db.calibration_records.update(recordId, { status: 'rejected', rejection_reason: rejectReason.trim() })
+      setRecords((prev) => prev.filter((r) => r.id !== recordId))
+      setRejecting(null)
+      setRejectReason('')
+    } catch (err) {
+      setRejectError(err instanceof Error ? err.message : 'Rejection failed')
     }
-    await db.calibration_records.update(recordId, { status: 'rejected', rejection_reason: rejectReason.trim() })
-    setRecords((prev) => prev.filter((r) => r.id !== recordId))
-    setRejecting(null)
-    setRejectReason('')
   }
 
   // Don't render anything while technician redirect is in flight

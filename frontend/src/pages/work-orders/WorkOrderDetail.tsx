@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Pencil, Trash2, Loader2, FlaskConical } from 'lucide-react'
+import { ArrowLeft, Pencil, Trash2, Loader2, FlaskConical, Users } from 'lucide-react'
 import { useWorkOrder, useDeleteWorkOrder } from '../../hooks/useWorkOrders'
 import { useAuth } from '../../hooks/useAuth'
 
@@ -132,6 +132,25 @@ export default function WorkOrderDetail() {
               </div>
             )}
           </div>
+
+          {wo.technicians.length > 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-white shadow-sm px-5 py-5 space-y-3">
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+                <Users size={14} />
+                Assigned Technicians ({wo.technicians.length})
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {wo.technicians.map((tech) => (
+                  <span
+                    key={tech.id}
+                    className="inline-flex items-center rounded-full bg-indigo-50 border border-indigo-200 px-3 py-1 text-sm font-medium text-indigo-700"
+                  >
+                    {tech.full_name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="rounded-2xl border border-gray-200 bg-white shadow-sm px-5 py-5 space-y-3">
             <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">

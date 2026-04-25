@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
+import { apiRequest } from '../../lib/api/client'
 import AddressAutocomplete from '../../components/ui/AddressAutocomplete'
 
 interface FormValues {
@@ -78,10 +79,14 @@ export default function CustomerForm() {
       address: values.address.trim() || null,
     }
 
-    const { error } = await supabase.from('customers').upsert(record)
-
-    if (error) {
-      setSubmitError(error.message)
+    try {
+      if (isEdit) {
+        await apiRequest('PUT', `/customers/${record.id}`, record)
+      } else {
+        await apiRequest('POST', '/customers', record)
+      }
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to save customer')
       setSubmitting(false)
       return
     }

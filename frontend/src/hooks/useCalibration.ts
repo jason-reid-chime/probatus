@@ -150,27 +150,22 @@ export function useSaveCalibration() {
         await db.measurements.bulkPut(measurements)
       }
 
-      // 2. Enqueue record in outbox
+      // 2. Enqueue calibration record in outbox (POST for new, PUT for existing)
       await enqueue({
-        table: 'calibration_records',
-        operation: 'upsert',
-        payload: record as unknown as Record<string, unknown>,
+        method: record.id ? 'PUT' : 'POST',
+        url:    record.id ? `/calibrations/${record.id}` : '/calibrations',
+        body:   {
+          ...(record as unknown as Record<string, unknown>),
+          standard_ids: standardIds,
+          measurements: measurements as unknown as Record<string, unknown>[],
+        },
       })
 
-      // 3. Enqueue measurements in outbox
-      for (const m of measurements) {
-        await enqueue({
-          table: 'calibration_measurements',
-          operation: 'upsert',
-          payload: m as unknown as Record<string, unknown>,
-        })
-      }
-
-      // 4. Enqueue standards as a replace operation so deletions are captured.
-      //    A single replace_standards entry replaces all prior ones for this record.
+      // 3. Standards are included in the calibration body above — no separate enqueue needed.
+      //    enqueueStandardsReplace is kept for backwards compatibility (no-op).
       await enqueueStandardsReplace(record.id, standardIds)
 
-      // 5. Attempt online sync opportunistically — skip entirely if offline.
+      // 4. Attempt online sync opportunistically — skip entirely if offline.
       //    5-second timeout guards against airplane-mode where onLine stays true.
       if (isOnline()) {
         try {
@@ -182,20 +177,14 @@ export function useSaveCalibration() {
               ),
             ])
 
-          const saved = await withTimeout(upsertCalibrationRecord(record))
+          const saved = await withTimeout(upsertCalibrationRecord(record, { standardIds, measurements }))
           await withTimeout(upsertMeasurements(measurements))
           await withTimeout(upsertCalibrationStandards(record.id, standardIds))
 
           // Clean up outbox entries now that sync succeeded — prevents double-flush
+          const calibrationUrl = record.id ? `/calibrations/${record.id}` : '/calibrations'
           const outboxEntries = await db.outbox
-            .filter((e) => {
-              const p = e.payload as Record<string, unknown>
-              return (
-                (e.table === 'calibration_records' && p['id'] === record.id) ||
-                (e.table === 'calibration_measurements' && typeof p['record_id'] === 'string' && p['record_id'] === record.id) ||
-                (e.table === 'calibration_standards_used' && typeof p['record_id'] === 'string' && p['record_id'] === record.id)
-              )
-            })
+            .filter((e) => e.url === calibrationUrl)
             .toArray()
           if (outboxEntries.length > 0) {
             await db.outbox.bulkDelete(outboxEntries.map((e) => e.id!))

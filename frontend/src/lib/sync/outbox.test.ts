@@ -27,7 +27,6 @@ vi.mock('../supabase/index', () => ({
 }))
 
 import { db } from '../db/index'
-import { supabase } from '../supabase/index'
 import { enqueue, flushOutbox, retryFailed } from './outbox'
 
 // ---------------------------------------------------------------------------
@@ -37,38 +36,13 @@ import { enqueue, flushOutbox, retryFailed } from './outbox'
 function makeEntry(overrides: Partial<OutboxEntry> = {}): OutboxEntry {
   return {
     id: 1,
-    table: 'assets',
-    operation: 'upsert',
-    payload: { id: 'asset-1' },
+    method: 'POST',
+    url: '/calibrations',
+    body: { id: 'asset-1' },
     created_at: '2026-01-01T00:00:00.000Z',
     retries: 0,
     ...overrides,
   }
-}
-
-/** Build a chainable Supabase stub that resolves to { data, error }. */
-function makeSupabaseChain(result: { data?: unknown; error?: unknown } = {}) {
-  const chain = {
-    select: vi.fn(),
-    upsert: vi.fn(),
-    insert: vi.fn(),
-    delete: vi.fn(),
-    eq:     vi.fn(),
-    order:  vi.fn(),
-    single: vi.fn(),
-  }
-  // Every method returns the same chain so calls can be chained arbitrarily
-  Object.keys(chain).forEach((k) => {
-    ;(chain as Record<string, ReturnType<typeof vi.fn>>)[k].mockReturnValue(chain)
-  })
-  // The final await resolves to the provided result
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ;(chain as any)[Symbol.iterator] = undefined
-  Object.assign(chain, {
-    then: (resolve: (v: unknown) => unknown) =>
-      Promise.resolve({ data: result.data ?? null, error: result.error ?? null }).then(resolve),
-  })
-  return chain
 }
 
 // ---------------------------------------------------------------------------
@@ -83,16 +57,16 @@ describe('enqueue', () => {
 
   it('calls db.outbox.add with retries=0 and a created_at timestamp', async () => {
     const before = Date.now()
-    await enqueue({ table: 'assets', operation: 'upsert', payload: { id: 'a1' } })
+    await enqueue({ method: 'POST', url: '/calibrations', body: { id: 'a1' } })
     const after = Date.now()
 
     expect(db.outbox.add).toHaveBeenCalledOnce()
     const arg = vi.mocked(db.outbox.add).mock.calls[0][0] as OutboxEntry
 
     expect(arg.retries).toBe(0)
-    expect(arg.table).toBe('assets')
-    expect(arg.operation).toBe('upsert')
-    expect(arg.payload).toEqual({ id: 'a1' })
+    expect(arg.method).toBe('POST')
+    expect(arg.url).toBe('/calibrations')
+    expect(arg.body).toEqual({ id: 'a1' })
 
     // created_at should be a valid ISO string within the test window
     const ts = new Date(arg.created_at).getTime()
@@ -101,7 +75,7 @@ describe('enqueue', () => {
   })
 
   it('does not include an id field in the payload passed to add', async () => {
-    await enqueue({ table: 'calibration_records', operation: 'delete', payload: { id: 'r1' } })
+    await enqueue({ method: 'DELETE', url: '/calibrations/r1' })
     const arg = vi.mocked(db.outbox.add).mock.calls[0][0] as OutboxEntry
     expect(arg.id).toBeUndefined()
   })
@@ -125,25 +99,21 @@ describe('flushOutbox', () => {
     await flushOutbox()
 
     expect(db.outbox.orderBy).toHaveBeenCalledWith('id')
-    expect(supabase.from).not.toHaveBeenCalled()
     expect(db.outbox.delete).not.toHaveBeenCalled()
   })
 
   it('processes entries in FIFO order and deletes successful ones', async () => {
     const entries = [
-      makeEntry({ id: 1, operation: 'upsert', table: 'assets' }),
-      makeEntry({ id: 2, operation: 'upsert', table: 'assets' }),
+      makeEntry({ id: 1, method: 'POST', url: '/calibrations' }),
+      makeEntry({ id: 2, method: 'PUT',  url: '/calibrations/abc' }),
     ]
     const orderByChain = { toArray: vi.fn().mockResolvedValue(entries) }
     vi.mocked(db.outbox.orderBy).mockReturnValue(orderByChain as never)
 
-    const supabaseChain = makeSupabaseChain({ error: null })
-    vi.mocked(supabase.from).mockReturnValue(supabaseChain as never)
+    // Mock global fetch to succeed
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true } as Response)
 
     await flushOutbox()
-
-    // Both entries processed (upsert called twice)
-    expect(supabase.from).toHaveBeenCalledTimes(2)
 
     // Both successfully deleted
     expect(db.outbox.delete).toHaveBeenCalledTimes(2)
@@ -156,8 +126,12 @@ describe('flushOutbox', () => {
     const orderByChain = { toArray: vi.fn().mockResolvedValue([entry]) }
     vi.mocked(db.outbox.orderBy).mockReturnValue(orderByChain as never)
 
-    const supabaseChain = makeSupabaseChain({ error: { message: 'network error' } })
-    vi.mocked(supabase.from).mockReturnValue(supabaseChain as never)
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      text: vi.fn().mockResolvedValue('network error'),
+    } as unknown as Response)
 
     await flushOutbox()
 
@@ -173,26 +147,28 @@ describe('flushOutbox', () => {
     const orderByChain = { toArray: vi.fn().mockResolvedValue([deadEntry]) }
     vi.mocked(db.outbox.orderBy).mockReturnValue(orderByChain as never)
 
+    globalThis.fetch = vi.fn()
+
     await flushOutbox()
 
-    expect(supabase.from).not.toHaveBeenCalled()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(db.outbox.delete).not.toHaveBeenCalled()
     expect(db.outbox.update).not.toHaveBeenCalled()
   })
 
-  it('handles a delete operation correctly', async () => {
-    const entry = makeEntry({ id: 5, operation: 'delete', table: 'assets', payload: { id: 'a-del' } })
+  it('handles a DELETE operation correctly', async () => {
+    const entry = makeEntry({ id: 5, method: 'DELETE', url: '/calibrations/a-del' })
     const orderByChain = { toArray: vi.fn().mockResolvedValue([entry]) }
     vi.mocked(db.outbox.orderBy).mockReturnValue(orderByChain as never)
 
-    const eqChain = { eq: vi.fn().mockResolvedValue({ error: null }) }
-    const deleteChain = { delete: vi.fn().mockReturnValue(eqChain) }
-    vi.mocked(supabase.from).mockReturnValue(deleteChain as never)
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true } as Response)
 
     await flushOutbox()
 
-    expect(supabase.from).toHaveBeenCalledWith('assets')
-    expect(eqChain.eq).toHaveBeenCalledWith('id', 'a-del')
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/calibrations/a-del'),
+      expect.objectContaining({ method: 'DELETE' }),
+    )
     expect(db.outbox.delete).toHaveBeenCalledWith(5)
   })
 
@@ -202,11 +178,14 @@ describe('flushOutbox', () => {
     const orderByChain = { toArray: vi.fn().mockResolvedValue([entry1, entry2]) }
     vi.mocked(db.outbox.orderBy).mockReturnValue(orderByChain as never)
 
-    const errorChain = makeSupabaseChain({ error: { message: 'fail' } })
-    const successChain = makeSupabaseChain({ error: null })
-    vi.mocked(supabase.from)
-      .mockReturnValueOnce(errorChain as never)
-      .mockReturnValueOnce(successChain as never)
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: 'fail',
+        text: vi.fn().mockResolvedValue('fail'),
+      } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true } as Response)
 
     await flushOutbox()
 

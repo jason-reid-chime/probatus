@@ -17,6 +17,7 @@ import (
 	"github.com/jasonreid/probatus/internal/audit"
 	"github.com/jasonreid/probatus/internal/calibrations"
 	"github.com/jasonreid/probatus/internal/certificates"
+	"github.com/jasonreid/probatus/internal/customers"
 	"github.com/jasonreid/probatus/internal/db"
 	"github.com/jasonreid/probatus/internal/middleware"
 	"github.com/jasonreid/probatus/internal/standards"
@@ -77,6 +78,7 @@ func main() {
 	// Instantiate handlers.
 	assetsHandler := assets.NewHandler(pool)
 	calibrationsHandler := calibrations.NewHandler(pool)
+	customersHandler := customers.NewHandler(pool)
 	standardsHandler := standards.NewHandler(pool)
 	certificatesHandler := certificates.NewHandler(pool)
 	statsHandler := stats.NewHandler(pool)
@@ -124,16 +126,28 @@ func main() {
 		r.Put("/assets/{id}", assetsHandler.Update)
 		r.Delete("/assets/{id}", assetsHandler.Delete)
 
-		// Calibrations
+		// Calibrations — bulk routes MUST be registered before {id} routes so Chi
+		// does not match the literal "bulk" segment as a UUID parameter.
 		r.Get("/calibrations", calibrationsHandler.List)
 		r.Post("/calibrations", calibrationsHandler.Create)
+		r.Post("/calibrations/bulk/approve", calibrationsHandler.BulkApprove)
+		r.Delete("/calibrations/bulk", calibrationsHandler.BulkDelete)
 		r.Get("/calibrations/{id}", calibrationsHandler.Get)
 		r.Put("/calibrations/{id}", calibrationsHandler.Update)
+		r.Delete("/calibrations/{id}", calibrationsHandler.Delete)
 		r.Post("/calibrations/{id}/approve", calibrationsHandler.Approve)
+		r.Post("/calibrations/{id}/reject", calibrationsHandler.Reject)
+		r.Post("/calibrations/{id}/reopen", calibrationsHandler.Reopen)
 		r.Post("/calibrations/{id}/certificate", certificatesHandler.Generate)
-			r.Post("/calibrations/{id}/send-email", certificatesHandler.SendEmail)
+		r.Post("/calibrations/{id}/send-email", certificatesHandler.SendEmail)
 
-			// Master Standards
+		// Customers
+		r.Get("/customers", customersHandler.List)
+		r.Post("/customers", customersHandler.Create)
+		r.Put("/customers/{id}", customersHandler.Update)
+		r.Delete("/customers/{id}", customersHandler.Delete)
+
+		// Master Standards
 		r.Get("/standards", standardsHandler.List)
 		r.Post("/standards", standardsHandler.Create)
 		r.Get("/standards/{id}", standardsHandler.Get)

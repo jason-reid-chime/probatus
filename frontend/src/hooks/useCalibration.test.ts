@@ -264,7 +264,7 @@ describe('useSaveCalibration', () => {
     expect(vi.mocked(db.measurements.bulkPut)).toHaveBeenCalledWith(measurements)
   })
 
-  it('enqueues record and each measurement in the outbox', async () => {
+  it('enqueues record and measurements in the outbox as a single calibration entry', async () => {
     vi.mocked(isOnline).mockReturnValue(false)
     const record = makeRecord()
     const measurements = [makeMeasurement({ id: 'm-1' }), makeMeasurement({ id: 'm-2' })]
@@ -275,9 +275,9 @@ describe('useSaveCalibration', () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
 
     const calls = vi.mocked(enqueue).mock.calls
-    const tables = calls.map((c) => c[0].table)
-    expect(tables).toContain('calibration_records')
-    expect(tables.filter((t) => t === 'calibration_measurements')).toHaveLength(2)
+    // The new outbox schema uses method/url/body — one entry for the calibration record
+    const urls = calls.map((c) => c[0].url)
+    expect(urls.some((u) => u.includes('/calibrations'))).toBe(true)
   })
 
   it('enqueues standards as a replace operation when standardIds provided', async () => {

@@ -9,6 +9,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { overallResult } from '../../utils/calibrationMath'
 import { useCustomerFilter } from '../../hooks/useCustomerFilter'
 import { supabase } from '../../lib/supabase'
+import { apiRequest } from '../../lib/api/client'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,18 +170,15 @@ export default function CalibrationList() {
     if (toApprove.length === 0) return
     setBulkLoading(true)
     setBulkError(null)
-    const { error } = await supabase
-      .from('calibration_records')
-      .update({ status: 'approved', approved_at: new Date().toISOString() })
-      .in('id', toApprove)
-    if (error) {
-      setBulkError(error.message)
-    } else {
+    try {
+      await apiRequest('POST', '/calibrations/bulk/approve', { ids: toApprove })
       await Promise.all(toApprove.map(id =>
         db.calibration_records.update(id, { status: 'approved', approved_at: new Date().toISOString() })
       ))
       setSelected(new Set())
       queryClient.invalidateQueries({ queryKey: ['calibrations'] })
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : 'Bulk approve failed')
     }
     setBulkLoading(false)
   }
@@ -190,14 +188,16 @@ export default function CalibrationList() {
     setBulkLoading(true)
     setBulkError(null)
     const ids = [...selected]
-    // Cascade in schema handles measurements + standards_used automatically
-    const { error } = await supabase.from('calibration_records').delete().in('id', ids)
-    if (error) {
-      setBulkError(error.message)
-    } else {
+    try {
+      await apiRequest('DELETE', '/calibrations/bulk', { ids })
       await db.calibration_records.bulkDelete(ids)
+      // delete orphaned measurements from Dexie
+      const allMeasurements = await db.measurements.where('record_id').anyOf(ids).toArray()
+      await db.measurements.bulkDelete(allMeasurements.map(m => m.id))
       setSelected(new Set())
       queryClient.invalidateQueries({ queryKey: ['calibrations'] })
+    } catch (err) {
+      setBulkError(err instanceof Error ? err.message : 'Bulk delete failed')
     }
     setBulkLoading(false)
   }
