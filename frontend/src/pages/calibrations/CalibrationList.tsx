@@ -176,8 +176,11 @@ export default function CalibrationList() {
     if (error) {
       setBulkError(error.message)
     } else {
+      await Promise.all(toApprove.map(id =>
+        db.calibration_records.update(id, { status: 'approved', approved_at: new Date().toISOString() })
+      ))
       setSelected(new Set())
-      queryClient.invalidateQueries({ queryKey: ['calibrations', 'list', tenantId] })
+      queryClient.invalidateQueries({ queryKey: ['calibrations'] })
     }
     setBulkLoading(false)
   }
@@ -192,8 +195,9 @@ export default function CalibrationList() {
     if (error) {
       setBulkError(error.message)
     } else {
+      await db.calibration_records.bulkDelete(ids)
       setSelected(new Set())
-      queryClient.invalidateQueries({ queryKey: ['calibrations', 'list', tenantId] })
+      queryClient.invalidateQueries({ queryKey: ['calibrations'] })
     }
     setBulkLoading(false)
   }

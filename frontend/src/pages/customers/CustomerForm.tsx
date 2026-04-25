@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
+import AddressAutocomplete from '../../components/ui/AddressAutocomplete'
 
 interface FormValues {
   name: string
@@ -138,12 +139,11 @@ export default function CustomerForm() {
 
             <div className="space-y-1">
               <label className="block text-sm font-medium text-gray-700">Address</label>
-              <textarea
+              <AddressAutocomplete
                 name="address"
                 value={values.address}
-                onChange={handleChange}
-                rows={3}
-                className={`${inputClass} resize-none`}
+                onChange={v => setValues(prev => ({ ...prev, address: v }))}
+                className={inputClass}
                 placeholder="123 Main St, Springfield, ON"
               />
             </div>
