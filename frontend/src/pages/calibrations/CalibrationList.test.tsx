@@ -10,12 +10,19 @@ vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => mockNavigate,
 }))
-vi.mock('../../lib/supabase', () => ({
-  supabase: {
-    from: vi.fn(),
-    auth: { getSession: vi.fn() },
-  },
-}))
+vi.mock('../../lib/supabase', () => {
+  const chain: Record<string, unknown> = {}
+  ;['select', 'eq', 'in', 'update', 'delete', 'order'].forEach((m) => {
+    chain[m] = vi.fn().mockReturnValue(chain)
+  })
+  chain['then'] = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(resolve)
+  return {
+    supabase: {
+      from: vi.fn().mockReturnValue(chain),
+      auth: { getSession: vi.fn() },
+    },
+  }
+})
 vi.mock('../../lib/db', () => ({
   db: {
     calibration_records: {
@@ -29,9 +36,12 @@ vi.mock('../../lib/db', () => ({
 vi.mock('../../lib/sync/connectivity', () => ({ isOnline: vi.fn().mockReturnValue(false) }))
 
 import { useAuth } from '../../hooks/useAuth'
+import { useCustomerFilter } from '../../hooks/useCustomerFilter'
 import CalibrationList from './CalibrationList'
 
-const mockProfile = { id: 'u1', tenant_id: 'tenant-1', role: 'technician', full_name: 'Tech' }
+vi.mock('../../hooks/useCustomerFilter', () => ({ useCustomerFilter: vi.fn() }))
+
+const mockProfile = { id: 'u1', tenant_id: 'tenant-1', role: 'supervisor', full_name: 'Sup' }
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -47,6 +57,7 @@ function renderPage() {
 describe('CalibrationList', () => {
   beforeEach(() => {
     vi.mocked(useAuth).mockReturnValue({ profile: mockProfile } as never)
+    vi.mocked(useCustomerFilter).mockReturnValue({ selectedCustomerId: null, setSelectedCustomerId: vi.fn() } as never)
     mockNavigate.mockReset()
   })
 
@@ -67,5 +78,16 @@ describe('CalibrationList', () => {
   it('shows empty state message after loading completes with no records', async () => {
     renderPage()
     expect(await screen.findByText(/no calibrations found/i)).toBeTruthy()
+  })
+
+  it('shows search input', () => {
+    renderPage()
+    expect(screen.getByPlaceholderText(/search by tag id/i)).toBeTruthy()
+  })
+
+  it('does not show bulk action bar when nothing is selected', async () => {
+    renderPage()
+    await screen.findByText(/no calibrations found/i)
+    expect(screen.queryByText(/selected/i)).toBeNull()
   })
 })

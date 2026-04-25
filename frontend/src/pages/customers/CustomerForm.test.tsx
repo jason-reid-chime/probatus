@@ -114,4 +114,24 @@ describe('CustomerForm', () => {
     renderEdit()
     await waitFor(() => expect(screen.getByText(/save changes/i)).toBeTruthy())
   })
+
+  it('renders email and phone fields', () => {
+    renderNew()
+    expect(document.querySelector('input[name="email"]')).toBeTruthy()
+    expect(document.querySelector('input[name="phone"]')).toBeTruthy()
+  })
+
+  it('renders contact person field', () => {
+    renderNew()
+    expect(document.querySelector('input[name="contact"]')).toBeTruthy()
+  })
+
+  it('pre-fills email and phone in edit mode', async () => {
+    vi.mocked(supabase.from).mockReturnValue(makeChain({
+      data: { id: 'c1', name: 'Acme', address: '', contact: 'Jane', email: 'jane@acme.com', phone: '555-0100' },
+    }) as never)
+    renderEdit()
+    await waitFor(() => expect((document.querySelector('input[name="email"]') as HTMLInputElement)?.value).toBe('jane@acme.com'))
+    expect((document.querySelector('input[name="phone"]') as HTMLInputElement)?.value).toBe('555-0100')
+  })
 })
