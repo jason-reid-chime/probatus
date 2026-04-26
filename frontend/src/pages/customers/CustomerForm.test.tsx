@@ -12,8 +12,13 @@ vi.mock('../../hooks/useAuth', () => ({ useAuth: vi.fn() }))
 vi.mock('../../lib/supabase', () => ({
   supabase: {
     from: vi.fn(),
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'tok' } } }),
+    },
   },
 }))
+
+vi.stubGlobal('fetch', vi.fn())
 
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
@@ -68,7 +73,7 @@ describe('CustomerForm', () => {
   })
 
   it('navigates to /customers on successful save', async () => {
-    vi.mocked(supabase.from).mockReturnValue(makeChain({ data: { id: 'c1', name: 'Acme' } }) as never)
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 201, json: () => Promise.resolve({ id: 'c1' }) } as never)
     renderNew()
     fireEvent.change(document.querySelector('input[name="name"]')!, { target: { value: 'Acme Corp' } })
     fireEvent.click(screen.getByText(/create customer/i))
@@ -88,7 +93,7 @@ describe('CustomerForm', () => {
   })
 
   it('shows submit error when upsert fails', async () => {
-    vi.mocked(supabase.from).mockReturnValue(makeChain({ error: { message: 'db error' } }) as never)
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('db error') } as never)
     renderNew()
     fireEvent.change(document.querySelector('input[name="name"]')!, { target: { value: 'Acme Corp' } })
     fireEvent.click(screen.getByText(/create customer/i))

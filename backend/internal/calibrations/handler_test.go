@@ -25,6 +25,31 @@ type errRow struct{ err error }
 
 func (r *errRow) Scan(...any) error { return r.err }
 
+// zeroRow satisfies pgx.Row by writing zero values for each destination pointer.
+type zeroRow struct{}
+
+func (z zeroRow) Scan(dests ...any) error {
+	for _, d := range dests {
+		switch v := d.(type) {
+		case **string:
+			*v = nil
+		case *string:
+			*v = ""
+		case *bool:
+			*v = false
+		case *int:
+			*v = 0
+		case *int64:
+			*v = 0
+		case *float64:
+			*v = 0
+		case *time.Time:
+			*v = time.Time{}
+		}
+	}
+	return nil
+}
+
 type emptyRows struct{ err error }
 
 func (e *emptyRows) Close()                                       {}
@@ -404,5 +429,196 @@ func TestBuildMinimalPDF_WithRange(t *testing.T) {
 	pdf := buildMinimalPDF(p)
 	if !strings.Contains(string(pdf), "100") {
 		t.Errorf("expected range value in PDF content")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reject
+// ---------------------------------------------------------------------------
+
+func TestReject_TechnicianForbidden(t *testing.T) {
+	h := newHandler(&mockDB{})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reject", strings.NewReader(`{"rejection_reason":"bad"}`)), "technician"), "abc")
+	w := httptest.NewRecorder()
+	h.Reject(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestReject_BadJSON(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 1")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reject", strings.NewReader(`{bad`)), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Reject(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestReject_NotFound(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 0")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reject", strings.NewReader(`{"rejection_reason":"bad data"}`)), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Reject(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestReject_Success(t *testing.T) {
+	h := newHandler(&mockDB{queryRowFn: func() pgx.Row { return zeroRow{} }})
+	body := `{"rejection_reason":"out of spec"}`
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reject", strings.NewReader(body)), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Reject(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reopen
+// ---------------------------------------------------------------------------
+
+func TestReopen_TechnicianAllowed(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 1")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reopen", nil), "technician"), "abc")
+	w := httptest.NewRecorder()
+	h.Reopen(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestReopen_NotFound(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 0")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reopen", nil), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Reopen(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestReopen_Success(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 1")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reopen", nil), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Reopen(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Delete
+// ---------------------------------------------------------------------------
+
+func TestDelete_TechnicianForbidden(t *testing.T) {
+	h := newHandler(&mockDB{})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodDelete, "/calibrations/abc", nil), "technician"), "abc")
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestDelete_NotFound(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("DELETE 0")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodDelete, "/calibrations/abc", nil), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestDelete_Success(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("DELETE 1")})
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodDelete, "/calibrations/abc", nil), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Delete(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d", w.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BulkApprove
+// ---------------------------------------------------------------------------
+
+func TestBulkApprove_TechnicianForbidden(t *testing.T) {
+	h := newHandler(&mockDB{})
+	req := withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/bulk/approve", strings.NewReader(`{"ids":["abc"]}`)), "technician")
+	w := httptest.NewRecorder()
+	h.BulkApprove(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestBulkApprove_BadJSON(t *testing.T) {
+	h := newHandler(&mockDB{})
+	req := withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/bulk/approve", strings.NewReader(`{bad`)), "supervisor")
+	w := httptest.NewRecorder()
+	h.BulkApprove(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestBulkApprove_Success(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 2")})
+	req := withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/bulk/approve", strings.NewReader(`{"ids":["a","b"]}`)), "supervisor")
+	w := httptest.NewRecorder()
+	h.BulkApprove(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]int
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if resp["approved"] != 2 {
+		t.Errorf("expected approved=2, got %d", resp["approved"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BulkDelete
+// ---------------------------------------------------------------------------
+
+func TestBulkDelete_TechnicianForbidden(t *testing.T) {
+	h := newHandler(&mockDB{})
+	req := withTenantUserAndRole(httptest.NewRequest(http.MethodDelete, "/calibrations/bulk", strings.NewReader(`{"ids":["abc"]}`)), "technician")
+	w := httptest.NewRecorder()
+	h.BulkDelete(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestBulkDelete_BadJSON(t *testing.T) {
+	h := newHandler(&mockDB{})
+	req := withTenantUserAndRole(httptest.NewRequest(http.MethodDelete, "/calibrations/bulk", strings.NewReader(`{bad`)), "supervisor")
+	w := httptest.NewRecorder()
+	h.BulkDelete(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestBulkDelete_Success(t *testing.T) {
+	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("DELETE 3")})
+	req := withTenantUserAndRole(httptest.NewRequest(http.MethodDelete, "/calibrations/bulk", strings.NewReader(`{"ids":["a","b","c"]}`)), "supervisor")
+	w := httptest.NewRecorder()
+	h.BulkDelete(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]int
+	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
+	if resp["deleted"] != 3 {
+		t.Errorf("expected deleted=3, got %d", resp["deleted"])
 	}
 }
