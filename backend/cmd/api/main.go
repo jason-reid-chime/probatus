@@ -23,6 +23,7 @@ import (
 	"github.com/jasonreid/probatus/internal/standards"
 	"github.com/jasonreid/probatus/internal/stats"
 	"github.com/jasonreid/probatus/internal/templates"
+	"github.com/jasonreid/probatus/internal/workorders"
 )
 
 // flushSentry waits up to 2 seconds for any buffered Sentry events to be
@@ -84,6 +85,7 @@ func main() {
 	statsHandler := stats.NewHandler(pool)
 	templatesHandler := templates.NewHandler(pool)
 	auditHandler := audit.NewHandler(pool)
+	workordersHandler := workorders.NewHandler(pool)
 
 	r := chi.NewRouter()
 
@@ -141,6 +143,14 @@ func main() {
 		r.Post("/calibrations/{id}/reopen", calibrationsHandler.Reopen)
 		r.Post("/calibrations/{id}/certificate", certificatesHandler.Generate)
 		r.Post("/calibrations/{id}/send-email", certificatesHandler.SendEmail)
+
+		// Work Orders — specific routes before {id}
+		r.Get("/work-orders", workordersHandler.List)
+		r.Post("/work-orders", workordersHandler.Create)
+		r.Get("/work-orders/{id}", workordersHandler.Get)
+		r.Put("/work-orders/{id}", workordersHandler.Update)
+		r.Delete("/work-orders/{id}", workordersHandler.Delete)
+		r.Patch("/work-orders/{id}/status", workordersHandler.UpdateStatus)
 
 		// Customers
 		r.Get("/customers", customersHandler.List)

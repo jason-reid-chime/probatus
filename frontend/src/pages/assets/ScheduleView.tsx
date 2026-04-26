@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { CalendarClock, Loader2, CheckSquare, Square } from 'lucide-react'
 import { useAuth } from '../../hooks/useAuth'
-import { supabase } from '../../lib/supabase'
 import { apiRequest } from '../../lib/api/client'
 
 // ---------------------------------------------------------------------------
@@ -68,8 +67,6 @@ function SkeletonRow() {
 interface ModalProps {
   selectedCount: number
   selectedIds: string[]
-  tenantId: string
-  userId: string
   onClose: () => void
   onSuccess: (workOrderId: string) => void
 }
@@ -77,8 +74,6 @@ interface ModalProps {
 function CreateWorkOrderModal({
   selectedCount,
   selectedIds,
-  tenantId,
-  userId,
   onClose,
   onSuccess,
 }: ModalProps) {
@@ -96,34 +91,15 @@ function CreateWorkOrderModal({
     setError(null)
 
     try {
-      // Create work order
-      const { data: wo, error: woErr } = await supabase
-        .from('work_orders')
-        .insert({
-          tenant_id: tenantId,
-          title: title.trim(),
-          scheduled_date: scheduledDate,
-          notes: notes.trim() || null,
-          status: 'open',
-          created_by: userId,
-        })
-        .select('id')
-        .single()
-
-      if (woErr || !wo) {
-        throw new Error(woErr?.message ?? 'Failed to create work order')
-      }
-
-      // Link assets
-      const { error: linkErr } = await supabase
-        .from('work_order_assets')
-        .insert(selectedIds.map((asset_id) => ({ work_order_id: wo.id, asset_id })))
-
-      if (linkErr) {
-        throw new Error(linkErr.message ?? 'Failed to link assets')
-      }
-
-      onSuccess(wo.id)
+      const result = await apiRequest<{ id: string }>('POST', '/work-orders', {
+        title: title.trim(),
+        scheduled_date: scheduledDate,
+        notes: notes.trim() || null,
+        status: 'open',
+        asset_ids: selectedIds,
+        technician_ids: [],
+      })
+      onSuccess(result.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
       setSubmitting(false)
@@ -436,12 +412,10 @@ export default function ScheduleView() {
       )}
 
       {/* Create Work Order modal */}
-      {modalOpen && profile && (
+      {modalOpen && (
         <CreateWorkOrderModal
           selectedCount={selectedIds.size}
           selectedIds={Array.from(selectedIds)}
-          tenantId={profile.tenant_id}
-          userId={profile.id}
           onClose={() => setModalOpen(false)}
           onSuccess={(woId) => navigate(`/work-orders/${woId}`)}
         />

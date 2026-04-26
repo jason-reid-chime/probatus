@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { apiRequest } from '../lib/api/client'
 import { useAuth } from './useAuth'
 import { useCustomerFilter } from './useCustomerFilter'
 
@@ -130,49 +131,31 @@ export function useUpsertWorkOrder() {
       assetIds: string[]
       technicianIds: string[]
     }) => {
-      const id = workOrder.id ?? crypto.randomUUID()
-
-      const record = {
-        id,
-        tenant_id: tenantId,
-        customer_id: workOrder.customer_id ?? null,
-        title: workOrder.title,
-        notes: workOrder.notes ?? null,
-        scheduled_date: workOrder.scheduled_date,
-        status: workOrder.status ?? 'open',
-        created_by: profile?.id ?? null,
+      if (workOrder.id) {
+        // update
+        await apiRequest('PUT', `/work-orders/${workOrder.id}`, {
+          title: workOrder.title,
+          notes: workOrder.notes,
+          scheduled_date: workOrder.scheduled_date,
+          status: workOrder.status,
+          customer_id: workOrder.customer_id,
+          asset_ids: assetIds,
+          technician_ids: technicianIds,
+        })
+        return workOrder.id
+      } else {
+        // create
+        const result = await apiRequest<{ id: string }>('POST', '/work-orders', {
+          title: workOrder.title,
+          notes: workOrder.notes,
+          scheduled_date: workOrder.scheduled_date,
+          status: workOrder.status ?? 'open',
+          customer_id: workOrder.customer_id,
+          asset_ids: assetIds,
+          technician_ids: technicianIds,
+        })
+        return result.id
       }
-
-      const { error: upsertError } = await supabase.from('work_orders').upsert(record)
-      if (upsertError) throw upsertError
-
-      // Replace assets
-      const { error: deleteAssetsError } = await supabase
-        .from('work_order_assets')
-        .delete()
-        .eq('work_order_id', id)
-      if (deleteAssetsError) throw deleteAssetsError
-
-      if (assetIds.length > 0) {
-        const rows = assetIds.map((assetId) => ({ work_order_id: id, asset_id: assetId }))
-        const { error: insertError } = await supabase.from('work_order_assets').insert(rows)
-        if (insertError) throw insertError
-      }
-
-      // Replace technicians
-      const { error: deleteTechsError } = await supabase
-        .from('work_order_technicians')
-        .delete()
-        .eq('work_order_id', id)
-      if (deleteTechsError) throw deleteTechsError
-
-      if (technicianIds.length > 0) {
-        const rows = technicianIds.map((technician_id) => ({ work_order_id: id, technician_id }))
-        const { error: insertTechError } = await supabase.from('work_order_technicians').insert(rows)
-        if (insertTechError) throw insertTechError
-      }
-
-      return id
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: workOrderKeys.all(tenantId) })
@@ -187,9 +170,21 @@ export function useDeleteWorkOrder() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      // ON DELETE CASCADE handles work_order_assets and work_order_technicians
-      const { error } = await supabase.from('work_orders').delete().eq('id', id)
-      if (error) throw error
+      await apiRequest('DELETE', `/work-orders/${id}`)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: workOrderKeys.all(tenantId) })
+    },
+  })
+}
+
+export function useUpdateWorkOrderStatus() {
+  const queryClient = useQueryClient()
+  const { profile } = useAuth()
+  const tenantId = profile?.tenant_id ?? ''
+  return useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      await apiRequest('PATCH', `/work-orders/${id}/status`, { status })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: workOrderKeys.all(tenantId) })

@@ -9,6 +9,7 @@ import { useSaveCalibration } from '../../hooks/useCalibration'
 import { overallResult, calcErrorPct, isPass, calc4_20mAErrorPct } from '../../utils/calibrationMath'
 import TemplatePicker from '../../components/calibrations/TemplatePicker'
 import StandardPicker from '../../components/standards/StandardPicker'
+import SignaturePad from '../../components/SignaturePad'
 import type { CalibrationTemplate } from '../../types'
 
 import PressureTemplate, {
@@ -325,6 +326,7 @@ export default function CalibrationForm() {
   const [salesNumber, setSalesNumber] = useState('')
   const [flagNumber, setFlagNumber] = useState('')
   const [notes, setNotes] = useState('')
+  const [techSignature, setTechSignature] = useState('')
 
   // Template state
   const [pressureRows, setPressureRows] = useState<PressureRow[]>([])
@@ -384,6 +386,7 @@ export default function CalibrationForm() {
           setSalesNumber(rec.sales_number ?? '')
           setFlagNumber(rec.flag_number ?? '')
           setNotes(rec.notes ?? '')
+          setTechSignature((rec as unknown as { tech_signature?: string }).tech_signature ?? '')
         }
 
         // Load existing measurements — fall back to Supabase if Dexie is empty.
@@ -602,10 +605,11 @@ export default function CalibrationForm() {
         sales_number: salesNumber || undefined,
         flag_number: flagNumber || undefined,
         notes: notes || undefined,
+        tech_signature: techSignature || undefined,
       }
 
       await saveCalibration.mutateAsync({
-        record,
+        record: record as Parameters<typeof saveCalibration.mutateAsync>[0]['record'],
         measurements: liveMeasurements,
         standardIds: selectedStandardIds,
       })
@@ -752,6 +756,16 @@ export default function CalibrationForm() {
             rows={3}
             placeholder="Observations, conditions, remarks…"
             className="w-full text-base px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent resize-none"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Technician Signature
+          </label>
+          <SignaturePad
+            value={techSignature}
+            onChange={setTechSignature}
+            label="Technician Signature"
           />
         </div>
       </div>

@@ -5,6 +5,7 @@ import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, Extern
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
 import { apiRequest, API_URL } from '../../lib/api/client'
+import SignaturePad from '../../components/SignaturePad'
 import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
 import { enqueue } from '../../lib/sync/outbox'
@@ -274,6 +275,10 @@ export default function CalibrationDetail() {
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailSent, setEmailSent] = useState(false)
 
+  // Approve modal
+  const [showApproveModal, setShowApproveModal] = useState(false)
+  const [supervisorSig, setSupervisorSig] = useState('')
+
   // Delete calibration
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -398,12 +403,14 @@ export default function CalibrationDetail() {
     setApproving(true)
     setApproveError(null)
     try {
-      await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: profile.full_name })
+      await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: supervisorSig })
       // Update Dexie so status persists on next visit
       await db.calibration_records.update(recordId, { status: 'approved' })
       queryClient.setQueryData(calibrationKeys.detail(recordId), (old: LocalCalibrationRecord | undefined) =>
         old ? { ...old, status: 'approved' } : old
       )
+      setShowApproveModal(false)
+      setSupervisorSig('')
     } catch (err) {
       setApproveError(err instanceof Error ? err.message : 'Failed to approve')
     } finally {
@@ -672,7 +679,7 @@ export default function CalibrationDetail() {
         <div className="space-y-2">
           <button
             type="button"
-            onClick={handleApprove}
+            onClick={() => setShowApproveModal(true)}
             disabled={approving}
             className="w-full inline-flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
           >
@@ -823,6 +830,36 @@ export default function CalibrationDetail() {
             <Trash2 size={16} />
             Delete Calibration
           </button>
+        </div>
+      )}
+
+      {/* Approve modal */}
+      {showApproveModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Approve Calibration</h3>
+            <SignaturePad
+              label="Supervisor Signature"
+              onChange={setSupervisorSig}
+            />
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => { setShowApproveModal(false); setSupervisorSig('') }}
+                className="flex-1 h-11 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleApprove}
+                disabled={!supervisorSig || approving}
+                className="flex-1 h-11 rounded-xl bg-green-600 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                {approving ? 'Approving…' : 'Confirm Approval'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
