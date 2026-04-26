@@ -203,3 +203,44 @@ func TestGetByTagID_NotFound(t *testing.T) {
 		t.Errorf("expected 404, got %d", rec.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Schedule
+// ---------------------------------------------------------------------------
+
+func TestSchedule_Success(t *testing.T) {
+	h := newHandler(&mockDB{}) // Query returns emptyRows{}, no error
+	req := withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets/schedule?days=30", nil), "tenant-1")
+	rec := httptest.NewRecorder()
+	h.Schedule(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	var out []any
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out) != 0 {
+		t.Errorf("expected empty slice, got %d items", len(out))
+	}
+}
+
+func TestSchedule_DBError(t *testing.T) {
+	h := newHandler(&mockDB{queryErr: fmt.Errorf("db down")})
+	req := withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets/schedule?days=30", nil), "tenant-1")
+	rec := httptest.NewRecorder()
+	h.Schedule(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestSchedule_CustomDays(t *testing.T) {
+	h := newHandler(&mockDB{}) // Query returns emptyRows{}, no error
+	req := withTenantCtx(httptest.NewRequest(http.MethodGet, "/assets/schedule?days=60", nil), "tenant-1")
+	rec := httptest.NewRecorder()
+	h.Schedule(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+}

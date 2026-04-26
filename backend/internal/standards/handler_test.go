@@ -2,6 +2,7 @@ package standards
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -68,6 +69,12 @@ func newHandler(db querier) *Handler { return &Handler{pool: db} }
 
 func withTenant(r *http.Request) *http.Request {
 	return r.WithContext(middleware.WithTenantID(r.Context(), "tenant-1"))
+}
+
+func withTenantAndRole(r *http.Request, role string) *http.Request {
+	ctx := middleware.WithTenantID(r.Context(), "tenant-1")
+	ctx = middleware.WithRole(ctx, role)
+	return r.WithContext(ctx)
 }
 
 func routeWithID(r *http.Request, id string) *http.Request {
@@ -195,5 +202,82 @@ func TestDelete_DBError(t *testing.T) {
 	h.Delete(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Recall
+// ---------------------------------------------------------------------------
+
+func TestRecall_Forbidden(t *testing.T) {
+	h := newHandler(nil) // DB never reached
+	req := routeWithID(
+		withTenantAndRole(httptest.NewRequest(http.MethodPost, "/standards/abc/recall", strings.NewReader(`{"recall_reason":"bad batch"}`)), "technician"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Recall(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestRecall_BadJSON(t *testing.T) {
+	h := newHandler(nil) // DB never reached
+	req := routeWithID(
+		withTenantAndRole(httptest.NewRequest(http.MethodPost, "/standards/abc/recall", strings.NewReader(`{bad}`)), "supervisor"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Recall(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestRecall_MissingReason(t *testing.T) {
+	h := newHandler(nil) // DB never reached
+	req := routeWithID(
+		withTenantAndRole(httptest.NewRequest(http.MethodPost, "/standards/abc/recall", strings.NewReader(`{"recall_reason":""}`)), "supervisor"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Recall(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestRecall_DBError(t *testing.T) {
+	h := newHandler(&mockDB{execErr: fmt.Errorf("db down")})
+	req := routeWithID(
+		withTenantAndRole(httptest.NewRequest(http.MethodPost, "/standards/abc/recall", strings.NewReader(`{"recall_reason":"bad batch"}`)), "supervisor"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Recall(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestRecall_Success(t *testing.T) {
+	tag := pgconn.NewCommandTag("UPDATE 3")
+	h := newHandler(&mockDB{execTag: tag})
+	req := routeWithID(
+		withTenantAndRole(httptest.NewRequest(http.MethodPost, "/standards/abc/recall", strings.NewReader(`{"recall_reason":"bad batch"}`)), "supervisor"),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Recall(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	var out map[string]int64
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out["recalled"] != 3 {
+		t.Errorf("expected recalled=3, got %d", out["recalled"])
 	}
 }
