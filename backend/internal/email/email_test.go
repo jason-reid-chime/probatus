@@ -18,7 +18,7 @@ func TestCertificateEmailHTML_IsHTMLDocument(t *testing.T) {
 		TechnicianName:   "Jane Smith",
 		OverallResult:    "PASS",
 		CertificateID:    "abc12345",
-		TenantName:       "Sheridan Automation",
+		TenantName:       "Probatus Inc",
 	}
 
 	html := CertificateEmailHTML(p)
@@ -74,13 +74,13 @@ func TestCertificateEmailHTML_ContainsCertificateID(t *testing.T) {
 
 func TestCertificateEmailHTML_ContainsTenantName(t *testing.T) {
 	p := CertificateEmailParams{
-		TenantName:    "Sheridan Automation",
+		TenantName:    "Probatus Inc",
 		OverallResult: "PASS",
 		CertificateID: "cert001",
 	}
 
 	html := CertificateEmailHTML(p)
-	if !strings.Contains(html, "Sheridan Automation") {
+	if !strings.Contains(html, "Probatus Inc") {
 		t.Error("expected tenant name in email HTML")
 	}
 }

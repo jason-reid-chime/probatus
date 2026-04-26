@@ -70,7 +70,7 @@ Status at a glance for supervisors and admins:
 | **Admin / Auditor** | Read-only access to all data, reports, and audit trail |
 
 ### 10. Multi-Tenant Architecture
-Each company is an isolated tenant. Data is separated at the database level via Row Level Security — one tenant cannot see another's data. Customers (e.g. City of London) belong to a tenant (e.g. Sheridan Automation), not the platform.
+Each company is an isolated tenant. Data is separated at the database level via Row Level Security — one tenant cannot see another's data. Customers (e.g. City of London) belong to a tenant (e.g. Probatus Inc), not the platform.
 
 ---
 

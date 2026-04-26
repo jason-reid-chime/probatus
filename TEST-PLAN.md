@@ -11,7 +11,7 @@
 | Role | Email | Password | Notes |
 |------|-------|----------|-------|
 | Admin | jasonxreid@gmail.com | *(your password)* | Full access — all features |
-| Customer Portal | portal@sheridanautomation.com | Demo1234! | Read-only, Sheridan Automation assets only |
+| Customer Portal | portal@sheridanautomation.com | Demo1234! | Read-only, Probatus Inc assets only |
 
 ---
 
@@ -33,7 +33,7 @@
 ### 1.2 Customer Portal Sign In
 - Sign out of the admin account.
 - Sign in as `portal@sheridanautomation.com` / `Demo1234!`
-- **Expected:** Lands on the Customer Portal — different layout (top bar only, no sidebar). Company name "Sheridan Automation" shown in header.
+- **Expected:** Lands on the Customer Portal — different layout (top bar only, no sidebar). Company name "Probatus Inc" shown in header.
 - Sign out and sign back in as admin to continue.
 
 ---
@@ -51,9 +51,9 @@
 ### 3.1 View Asset List
 - Navigate to **Assets** in the sidebar.
 - **Expected:** At least 4 instruments:
-  - `SA-PT-001` — Zurn Wilkins TG-5 (pressure) — Sheridan Automation
-  - `SA-TT-014` — Rosemount 644 (temperature) — Sheridan Automation
-  - `SA-FT-007` — Endress+Hauser Promag 50 (level) — Sheridan Automation
+  - `SA-PT-001` — Zurn Wilkins TG-5 (pressure) — Probatus Inc
+  - `SA-TT-014` — Rosemount 644 (temperature) — Probatus Inc
+  - `SA-FT-007` — Endress+Hauser Promag 50 (level) — Probatus Inc
   - `ABC-PT-003` — Honeywell STD820 (pressure) — ABC Manufacturing
 
 ### 3.2 Asset Detail
@@ -125,7 +125,7 @@ This is the core feature. Walk through the full lifecycle.
 - Tap **Download Certificate (PDF)**.
 - **Expected:** A PDF downloads within a few seconds. Open it and verify:
   - Header shows **Apex Calibration Services** (your company)
-  - Customer info shows **Sheridan Automation**
+  - Customer info shows **Probatus Inc**
   - Device info: Tag SA-PT-001, Zurn Wilkins TG-5, serial 04250384, range 0–15 PSID
   - Calibration results table with all 5 points and Pass/Fail for each
   - Standards table showing the Fluke 718 with its cert reference
@@ -168,7 +168,7 @@ This is the core feature. Walk through the full lifecycle.
 ### 7.1 Customer View (Portal Login)
 - Sign out of admin.
 - Sign in as `portal@sheridanautomation.com` / `Demo1234!`
-- **Expected:** Portal dashboard loads with Sheridan Automation assets only (3 assets: SA-PT-001, SA-TT-014, SA-FT-007). The ABC Manufacturing asset should NOT be visible.
+- **Expected:** Portal dashboard loads with Probatus Inc assets only (3 assets: SA-PT-001, SA-TT-014, SA-FT-007). The ABC Manufacturing asset should NOT be visible.
 - Check the summary cards (Total, Overdue, Due Within 90 Days, All Current).
 
 ### 7.2 Asset Detail in Portal
@@ -189,7 +189,7 @@ This is the core feature. Walk through the full lifecycle.
 - Set a date range covering the past 30 days.
 - Leave customer blank (all customers) and click **Generate Audit Package**.
 - **Expected:** A file downloads (ZIP or PDF) containing certificates for approved calibrations in that range.
-- Try again with a specific customer selected (Sheridan Automation) — should include only that customer's records.
+- Try again with a specific customer selected (Probatus Inc) — should include only that customer's records.
 - Try an empty date range or a range with no approved calibrations — should show a helpful message rather than crash.
 
 > **Note:** Requires Railway backend to be running.

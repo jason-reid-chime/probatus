@@ -49,7 +49,7 @@ WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE id = v_user_id);
 -- ============================================================
 INSERT INTO customers (id, tenant_id, name, address, contact)
 VALUES
-  (gen_random_uuid(), v_tenant_id, 'Sheridan Automation',
+  (gen_random_uuid(), v_tenant_id, 'Probatus Inc',
    '966 Pantera Drive, Unit 34, Mississauga, ON L4W 2S1',
    'maintenance@sheridanautomation.com')
 RETURNING id INTO v_customer1_id;
@@ -235,14 +235,14 @@ IF v_portal_user_id IS NULL THEN
     crypt('Demo1234!', gen_salt('bf')),
     now(), now(), now(),
     '{"provider":"email","providers":["email"]}',
-    '{"full_name":"Sheridan Automation"}',
+    '{"full_name":"Probatus Inc"}',
     'authenticated', 'authenticated'
   );
 END IF;
 
 -- Link portal user to the customer
 INSERT INTO profiles (id, tenant_id, full_name, role, roles, customer_id)
-SELECT v_portal_user_id, v_tenant_id, 'Sheridan Automation', 'customer',
+SELECT v_portal_user_id, v_tenant_id, 'Probatus Inc', 'customer',
        ARRAY['customer']::user_role[], v_customer1_id
 WHERE EXISTS (SELECT 1 FROM auth.users WHERE id = v_portal_user_id)
 ON CONFLICT (id) DO UPDATE SET

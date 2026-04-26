@@ -4,7 +4,7 @@
 ---
 
 ## Who I am
-Jason Reid — calibration technician at Sheridan Automation (London + Mississauga, Ontario). I perform field calibrations and my name/signature appears on our certificates. I'm building Probatus to replace our paper + MS Access workflow and potentially sell it as a SaaS to other calibration companies.
+Jason Reid — calibration technician at Probatus Inc (London + Mississauga, Ontario). I perform field calibrations and my name/signature appears on our certificates. I'm building Probatus to replace our paper + MS Access workflow and potentially sell it as a SaaS to other calibration companies.
 
 ## What we're building
 **Probatus** — a multi-tenant, offline-first digital calibration management SaaS platform. Named after the Latin word for "tested and proven." I have a strong interest in ancient Greek and Roman themes.
@@ -12,7 +12,7 @@ Jason Reid — calibration technician at Sheridan Automation (London + Mississau
 ## Files
 All in `/Users/jasonreid/Projects/Probatus/`:
 - `calibration-system-onepager.md` — full product one-pager with features and user stories
-- `Calibration Certificate.pdf` — real Sheridan Automation certificate (the PDF output target)
+- `Calibration Certificate.pdf` — real Probatus Inc certificate (the PDF output target)
 - `Digital Calibration Management System.docx` — original spec
 
 ## Confirmed tech stack
@@ -31,7 +31,7 @@ All in `/Users/jasonreid/Projects/Probatus/`:
 - **Multi-tenant:** shared Postgres DB + Row Level Security per tenant
 - **Offline sync (P0):** one cert = one tech for MVP, no concurrent conflicts, outbox pattern
 - **QR/barcode scanning:** must-have for v1
-- **PDF format:** must match Sheridan Automation certificate exactly (ISO/IEC 17025)
+- **PDF format:** must match Probatus Inc certificate exactly (ISO/IEC 17025)
 - **No data migration** from Access in v1
 - **Sales # and Flag #** are optional free-text fields for now
 - **Device type:** TBD — Capacitor covers all scenarios

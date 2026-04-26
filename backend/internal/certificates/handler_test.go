@@ -66,7 +66,7 @@ func makeCertData() certData {
 		RangeMin:       &rangeMin,
 		RangeMax:       &rangeMax,
 		RangeUnit:      "psi",
-		TenantName:     "Sheridan Automation",
+		TenantName:     "Probatus Inc",
 		GeneratedAt:    now,
 		Measurements: []measurementRow{
 			{PointLabel: "0%", StandardValue: 0, MeasuredValue: 0.1, Unit: "psi", ErrorPct: 0.0, Pass: true},
@@ -92,7 +92,7 @@ func TestBuildMinimalCertPDF_ContainsTenantName(t *testing.T) {
 	d := makeCertData()
 	pdf := buildMinimalCertPDF(d)
 	text := string(pdf)
-	if !strings.Contains(text, "Sheridan Automation") {
+	if !strings.Contains(text, "Probatus Inc") {
 		t.Error("expected tenant name in PDF content")
 	}
 }

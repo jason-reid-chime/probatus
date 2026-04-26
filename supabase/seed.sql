@@ -34,7 +34,7 @@ on conflict (id) do nothing;
 -- TENANT
 -- =============================================================
 insert into tenants (id, name, slug) values
-  ('10000000-0000-0000-0000-000000000001', 'Sheridan Automation', 'sheridan-automation')
+  ('10000000-0000-0000-0000-000000000001', 'Probatus Inc', 'sheridan-automation')
 on conflict (id) do nothing;
 
 -- =============================================================

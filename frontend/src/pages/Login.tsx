@@ -183,7 +183,7 @@ export default function Login() {
                   {...signupForm.register('company')}
                   className={['w-full rounded-xl border px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent min-h-[48px]',
                     signupForm.formState.errors.company ? 'border-red-400 bg-red-50' : 'border-gray-300'].join(' ')}
-                  placeholder="Sheridan Automation"
+                  placeholder="Probatus Inc"
                 />
                 {signupForm.formState.errors.company && <p className="mt-1.5 text-sm text-red-600">{signupForm.formState.errors.company.message}</p>}
               </div>

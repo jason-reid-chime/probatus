@@ -322,7 +322,7 @@ export default function Signup() {
                   autoComplete="organization"
                   {...createForm.register('company_name')}
                   className={inputClass(!!createForm.formState.errors.company_name)}
-                  placeholder="Sheridan Automation"
+                  placeholder="Probatus Inc"
                 />
               </Field>
 
