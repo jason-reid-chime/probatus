@@ -10,7 +10,11 @@ interface SignaturePadProps {
 export default function SignaturePad({ value, onChange, label = 'Signature' }: SignaturePadProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
+  const onChangeRef = useRef(onChange)
   const [isEmpty, setIsEmpty] = useState(!value)
+
+  // Keep onChangeRef current without re-running the touch-listener effect.
+  useEffect(() => { onChangeRef.current = onChange })
 
   // Restore saved signature on mount only — intentionally omitting `value`
   // from deps so drawing doesn't reset on every parent re-render.
@@ -22,54 +26,87 @@ export default function SignaturePad({ value, onChange, label = 'Signature' }: S
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function getPos(e: React.MouseEvent | React.TouchEvent) {
+  function canvasPos(clientX: number, clientY: number) {
     const canvas = canvasRef.current!
     const rect = canvas.getBoundingClientRect()
-    const scaleX = canvas.width / rect.width
-    const scaleY = canvas.height / rect.height
-    if ('touches' in e) {
-      return {
-        x: (e.touches[0].clientX - rect.left) * scaleX,
-        y: (e.touches[0].clientY - rect.top) * scaleY,
-      }
-    }
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top)  * (canvas.height / rect.height),
     }
   }
 
-  function startDraw(e: React.MouseEvent | React.TouchEvent) {
-    e.preventDefault()
+  // Mouse handlers (React synthetic events — no passive conflict).
+  function onMouseDown(e: React.MouseEvent) {
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
     drawing.current = true
-    const { x, y } = getPos(e)
+    const { x, y } = canvasPos(e.clientX, e.clientY)
     ctx.beginPath()
     ctx.moveTo(x, y)
   }
 
-  function draw(e: React.MouseEvent | React.TouchEvent) {
-    e.preventDefault()
+  function onMouseMove(e: React.MouseEvent) {
     if (!drawing.current) return
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
-    const { x, y } = getPos(e)
-    ctx.lineWidth = 2
-    ctx.lineCap = 'round'
-    ctx.strokeStyle = '#1e293b'
+    const { x, y } = canvasPos(e.clientX, e.clientY)
+    ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1e293b'
     ctx.lineTo(x, y)
     ctx.stroke()
     setIsEmpty(false)
   }
 
-  function endDraw(e: React.MouseEvent | React.TouchEvent) {
-    e.preventDefault()
+  function onMouseUp() {
     if (!drawing.current) return
     drawing.current = false
-    const dataUrl = canvasRef.current?.toDataURL('image/png') ?? ''
-    onChange(dataUrl)
+    onChangeRef.current(canvasRef.current?.toDataURL('image/png') ?? '')
   }
+
+  // Touch handlers must be attached manually with { passive: false } so that
+  // preventDefault() works — React always registers onTouchX as passive.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    function onTouchStart(e: TouchEvent) {
+      e.preventDefault()
+      const ctx = canvas!.getContext('2d')
+      if (!ctx) return
+      drawing.current = true
+      const { x, y } = canvasPos(e.touches[0].clientX, e.touches[0].clientY)
+      ctx.beginPath()
+      ctx.moveTo(x, y)
+    }
+
+    function onTouchMove(e: TouchEvent) {
+      e.preventDefault()
+      if (!drawing.current) return
+      const ctx = canvas!.getContext('2d')
+      if (!ctx) return
+      const { x, y } = canvasPos(e.touches[0].clientX, e.touches[0].clientY)
+      ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1e293b'
+      ctx.lineTo(x, y)
+      ctx.stroke()
+      setIsEmpty(false)
+    }
+
+    function onTouchEnd(e: TouchEvent) {
+      e.preventDefault()
+      if (!drawing.current) return
+      drawing.current = false
+      onChangeRef.current(canvas!.toDataURL('image/png'))
+    }
+
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false })
+    canvas.addEventListener('touchmove',  onTouchMove,  { passive: false })
+    canvas.addEventListener('touchend',   onTouchEnd,   { passive: false })
+
+    return () => {
+      canvas.removeEventListener('touchstart', onTouchStart)
+      canvas.removeEventListener('touchmove',  onTouchMove)
+      canvas.removeEventListener('touchend',   onTouchEnd)
+    }
+  }, [])
 
   function clear() {
     const canvas = canvasRef.current
@@ -99,13 +136,10 @@ export default function SignaturePad({ value, onChange, label = 'Signature' }: S
           width={600}
           height={150}
           className="w-full h-[120px] cursor-crosshair"
-          onMouseDown={startDraw}
-          onMouseMove={draw}
-          onMouseUp={endDraw}
-          onMouseLeave={endDraw}
-          onTouchStart={startDraw}
-          onTouchMove={draw}
-          onTouchEnd={endDraw}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
         />
       </div>
       {isEmpty && (
