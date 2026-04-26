@@ -313,7 +313,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			`INSERT INTO calibration_records
 				(id, tenant_id, asset_id, technician_id, status, performed_at,
 				 sales_number, flag_number, tech_signature, notes, local_id)
-			 VALUES ($1::uuid,$2,$3,$4,'draft',$5,$6,$7,$8,$9,$10)
+			 VALUES ($1::uuid,$2,$3,$4,'in_progress',$5,$6,$7,$8,$9,$10)
 			 ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
 			 RETURNING id::text`,
 			body.ID, tenantID, body.AssetID, userID, performedAt,
@@ -324,7 +324,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			`INSERT INTO calibration_records
 				(tenant_id, asset_id, technician_id, status, performed_at,
 				 sales_number, flag_number, tech_signature, notes, local_id)
-			 VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9)
+			 VALUES ($1,$2,$3,'in_progress',$4,$5,$6,$7,$8,$9)
 			 RETURNING id::text`,
 			tenantID, body.AssetID, userID, performedAt,
 			body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
@@ -403,7 +403,15 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.pool.Exec(r.Context(),
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		slog.Error("calibrations.Update: begin transaction failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	tag, err := tx.Exec(r.Context(),
 		`UPDATE calibration_records
 		 SET status = COALESCE(NULLIF($3,''), status),
 		     tech_signature = COALESCE(NULLIF($4,''), tech_signature),
@@ -422,6 +430,31 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if tag.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "calibration not found")
+		return
+	}
+
+	// Replace standards: delete existing links then insert the current selection.
+	if _, err := tx.Exec(r.Context(),
+		`DELETE FROM calibration_standards_used WHERE record_id = $1`, id,
+	); err != nil {
+		slog.Error("calibrations.Update: delete standards failed", "record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update standards")
+		return
+	}
+	for _, stdID := range body.StandardIDs {
+		if _, err := tx.Exec(r.Context(),
+			`INSERT INTO calibration_standards_used (record_id, standard_id) VALUES ($1,$2)`,
+			id, stdID,
+		); err != nil {
+			slog.Error("calibrations.Update: standard link failed", "record_id", id, "standard_id", stdID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to link standard")
+			return
+		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("calibrations.Update: commit failed", "record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
 

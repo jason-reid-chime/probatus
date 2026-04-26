@@ -301,12 +301,14 @@ export default function CalibrationDetail() {
     return overallResult(measurements)
   }, [record, measurements])
 
-  // Ensures the record exists in the backend. If GET returns 404 (record was
-  // created offline and never synced), it POSTs the full record using the same
-  // client UUID so future PUTs and approve calls can find it.
+  // Ensures the record exists in the backend with the correct status. If GET
+  // returns 404 (offline-created record never synced), POSTs to create it then
+  // PUTs to align the status, so subsequent approve/submit calls succeed.
   async function ensureBackendRecord() {
+    let backendStatus: string | null = null
     try {
-      await apiRequest('GET', `/calibrations/${record!.id}`)
+      const res = await apiRequest('GET', `/calibrations/${record!.id}`) as { status?: string }
+      backendStatus = res?.status ?? null
     } catch (err) {
       if (err instanceof Error && err.message.includes('404')) {
         await apiRequest('POST', '/calibrations', {
@@ -329,7 +331,21 @@ export default function CalibrationDetail() {
             notes:          m.notes ?? '',
           })),
         })
+        backendStatus = 'in_progress'
       }
+    }
+    // If the backend status is out of sync with local, bring it up to date so
+    // submit-for-approval and approve calls find the right status.
+    if (backendStatus !== null && backendStatus !== record!.status) {
+      await apiRequest('PUT', `/calibrations/${record!.id}`, {
+        status:         record!.status,
+        tech_signature: record!.tech_signature ?? '',
+        sales_number:   record!.sales_number   ?? '',
+        flag_number:    record!.flag_number     ?? '',
+        notes:          record!.notes          ?? '',
+        local_id:       record!.local_id       ?? '',
+        standard_ids:   [],
+      })
     }
   }
 
