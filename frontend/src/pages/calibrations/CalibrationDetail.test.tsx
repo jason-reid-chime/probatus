@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
@@ -17,7 +17,11 @@ vi.mock('../../lib/db', () => ({
     measurements:         { where: vi.fn().mockReturnValue({ equals: vi.fn().mockReturnValue({ delete: vi.fn().mockResolvedValue(undefined) }) }) },
   },
 }))
-vi.mock('../../lib/sync/outbox', () => ({ enqueue: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('../../lib/sync/outbox', () => ({
+  enqueue:      vi.fn().mockResolvedValue(undefined),
+  flushOutbox:  vi.fn().mockResolvedValue(undefined),
+  retryFailed:  vi.fn().mockResolvedValue(undefined),
+}))
 vi.mock('../../lib/supabase', () => ({
   supabase: {
     auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
@@ -28,7 +32,10 @@ vi.mock('../../lib/supabase', () => ({
     }),
   },
 }))
-vi.mock('../../lib/api/client', () => ({ API_URL: 'http://localhost:8080' }))
+vi.mock('../../lib/api/client', () => ({
+  API_URL: 'http://localhost:8080',
+  apiRequest: vi.fn().mockResolvedValue({}),
+}))
 
 import { useAuth } from '../../hooks/useAuth'
 import { useCalibrationRecord, useMeasurementsByRecord } from '../../hooks/useCalibration'
@@ -101,5 +108,47 @@ describe('CalibrationDetail', () => {
     } as never)
     renderPage()
     expect(screen.getByRole('button', { name: /download certificate/i })).toBeTruthy()
+  })
+
+  it('does not show Approve button for technician even on pending_approval record', () => {
+    vi.mocked(useAuth).mockReturnValue({ profile: { ...supervisor, role: 'technician' } } as never)
+    vi.mocked(useCalibrationRecord).mockReturnValue({
+      data: { ...baseRecord, status: 'pending_approval' }, isLoading: false,
+    } as never)
+    renderPage()
+    expect(screen.queryByRole('button', { name: /approve calibration/i })).toBeNull()
+  })
+
+  it('shows pending approval status badge', () => {
+    vi.mocked(useCalibrationRecord).mockReturnValue({
+      data: { ...baseRecord, status: 'pending_approval' }, isLoading: false,
+    } as never)
+    renderPage()
+    expect(screen.getByText(/pending approval/i)).toBeTruthy()
+  })
+
+  it('submit for approval button triggers outbox flush and API update', async () => {
+    const { apiRequest } = await import('../../lib/api/client')
+    const { flushOutbox, retryFailed } = await import('../../lib/sync/outbox')
+
+    vi.mocked(useCalibrationRecord).mockReturnValue({ data: baseRecord, isLoading: false } as never)
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /submit for approval/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(retryFailed)).toHaveBeenCalled()
+      expect(vi.mocked(flushOutbox)).toHaveBeenCalled()
+      expect(vi.mocked(apiRequest)).toHaveBeenCalledWith('GET', expect.stringContaining('rec-1'))
+    })
+  })
+
+  it('approve button opens the supervisor signature modal', () => {
+    vi.mocked(useCalibrationRecord).mockReturnValue({
+      data: { ...baseRecord, status: 'pending_approval' }, isLoading: false,
+    } as never)
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /approve calibration/i }))
+    expect(screen.getByText(/supervisor signature/i)).toBeTruthy()
   })
 })

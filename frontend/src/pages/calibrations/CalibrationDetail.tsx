@@ -301,17 +301,49 @@ export default function CalibrationDetail() {
     return overallResult(measurements)
   }, [record, measurements])
 
+  // Ensures the record exists in the backend. If GET returns 404 (record was
+  // created offline and never synced), it POSTs the full record using the same
+  // client UUID so future PUTs and approve calls can find it.
+  async function ensureBackendRecord() {
+    try {
+      await apiRequest('GET', `/calibrations/${record!.id}`)
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('404')) {
+        await apiRequest('POST', '/calibrations', {
+          id:             record!.id,
+          asset_id:       record!.asset_id,
+          performed_at:   record!.performed_at,
+          sales_number:   record!.sales_number,
+          flag_number:    record!.flag_number,
+          tech_signature: record!.tech_signature,
+          notes:          record!.notes,
+          local_id:       record!.local_id,
+          standard_ids:   [],
+          measurements:   measurements.map((m) => ({
+            point_label:    m.point_label,
+            standard_value: m.standard_value ?? 0,
+            measured_value: m.measured_value ?? 0,
+            unit:           m.unit ?? '',
+            pass:           m.pass ?? false,
+            error_pct:      m.error_pct ?? 0,
+            notes:          m.notes ?? '',
+          })),
+        })
+      }
+    }
+  }
+
   async function handleSubmitForApproval() {
     if (!record || !profile) return
     setSubmitting(true)
     setSubmitError(null)
 
     try {
-      // Reset dead entries and flush so the record exists in the backend before
-      // the status PUT — dead entries are typically caused by the now-fixed
-      // double-slash URL bug and are safe to retry.
+      // Flush outbox (resetting dead entries) then ensure the record exists in
+      // the backend — handles both stuck outbox entries and cleared outbox cases.
       await retryFailed()
       await flushOutbox()
+      await ensureBackendRecord()
 
       const updated = {
         ...record,
@@ -394,10 +426,9 @@ export default function CalibrationDetail() {
     setApproving(true)
     setApproveError(null)
     try {
-      // Reset any dead outbox entries and flush so the record is guaranteed to
-      // exist in the backend before the approve call.
       await retryFailed()
       await flushOutbox()
+      await ensureBackendRecord()
       await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: supervisorSig })
       // Update Dexie so status persists on next visit
       await db.calibration_records.update(recordId, { status: 'approved' })
