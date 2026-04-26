@@ -8,7 +8,7 @@ import { apiRequest, API_URL } from '../../lib/api/client'
 import SignaturePad from '../../components/SignaturePad'
 import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
-import { flushOutbox } from '../../lib/sync/outbox'
+import { flushOutbox, retryFailed } from '../../lib/sync/outbox'
 import { overallResult, computeCombinedUncertainty } from '../../utils/calibrationMath'
 import type { LocalMeasurement } from '../../lib/db'
 
@@ -307,9 +307,10 @@ export default function CalibrationDetail() {
     setSubmitError(null)
 
     try {
-      // Flush any pending outbox entries for this record first — if the initial
-      // create hasn't synced yet the backend won't know about this UUID, causing
-      // the subsequent PUT and approve calls to 404.
+      // Reset dead entries and flush so the record exists in the backend before
+      // the status PUT — dead entries are typically caused by the now-fixed
+      // double-slash URL bug and are safe to retry.
+      await retryFailed()
       await flushOutbox()
 
       const updated = {
@@ -393,6 +394,10 @@ export default function CalibrationDetail() {
     setApproving(true)
     setApproveError(null)
     try {
+      // Reset any dead outbox entries and flush so the record is guaranteed to
+      // exist in the backend before the approve call.
+      await retryFailed()
+      await flushOutbox()
       await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: supervisorSig })
       // Update Dexie so status persists on next visit
       await db.calibration_records.update(recordId, { status: 'approved' })
