@@ -28,6 +28,9 @@ import CalendarView from './pages/calendar/CalendarView'
 import WorkOrdersList from './pages/work-orders/WorkOrdersList'
 import WorkOrderForm from './pages/work-orders/WorkOrderForm'
 import WorkOrderDetail from './pages/work-orders/WorkOrderDetail'
+import BatchSession from './pages/calibrations/BatchSession'
+import ScheduleView from './pages/assets/ScheduleView'
+import Signup from './pages/Signup'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +50,7 @@ export default function App() {
           <Analytics />
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
             <Route element={<CustomerPortalShell />}>
               <Route path="portal" element={<PortalDashboard />} />
               <Route path="portal/assets/:id" element={<PortalAssetDetail />} />
@@ -78,6 +82,8 @@ export default function App() {
               <Route path="work-orders/new" element={<WorkOrderForm />} />
               <Route path="work-orders/:id" element={<WorkOrderDetail />} />
               <Route path="work-orders/:id/edit" element={<WorkOrderForm />} />
+              <Route path="calibrations/batch" element={<BatchSession />} />
+              <Route path="schedule" element={<ScheduleView />} />
             </Route>
           </Routes>
           </BrowserRouter>

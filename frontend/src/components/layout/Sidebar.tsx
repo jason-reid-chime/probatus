@@ -13,6 +13,8 @@ import {
   Building2,
   CalendarDays,
   Briefcase,
+  Layers,
+  CalendarClock,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
@@ -43,36 +45,40 @@ interface NavItem {
   roles?: Array<'technician' | 'supervisor' | 'admin'>
 }
 
-const navItems: NavItem[] = [
-  { to: '/', label: 'Dashboard', Icon: LayoutDashboard },
-  { to: '/calendar', label: 'Calendar', Icon: CalendarDays },
-  { to: '/assets', label: 'Assets', Icon: Wrench },
-  { to: '/calibrations', label: 'Calibrations', Icon: ClipboardList },
-  { to: '/customers', label: 'Customers', Icon: Building2 },
-  { to: '/work-orders', label: 'Work Orders', Icon: Briefcase },
+interface NavSection {
+  label: string
+  items: NavItem[]
+  roles?: Array<'technician' | 'supervisor' | 'admin'>
+}
+
+const navSections: NavSection[] = [
   {
-    to: '/approvals',
-    label: 'Approvals',
-    Icon: ClipboardCheck,
-    roles: ['supervisor', 'admin'],
+    label: 'Field Work',
+    items: [
+      { to: '/', label: 'Dashboard', Icon: LayoutDashboard },
+      { to: '/work-orders', label: 'Work Orders', Icon: Briefcase },
+      { to: '/calibrations', label: 'Calibrations', Icon: ClipboardList },
+      { to: '/calibrations/batch', label: 'Batch Session', Icon: Layers },
+      { to: '/assets', label: 'Assets', Icon: Wrench },
+    ],
   },
   {
-    to: '/standards',
-    label: 'Standards',
-    Icon: FlaskConical,
+    label: 'Management',
     roles: ['supervisor', 'admin'],
+    items: [
+      { to: '/approvals', label: 'Approvals', Icon: ClipboardCheck, roles: ['supervisor', 'admin'] },
+      { to: '/schedule', label: 'Schedule', Icon: CalendarClock, roles: ['supervisor', 'admin'] },
+      { to: '/customers', label: 'Customers', Icon: Building2, roles: ['supervisor', 'admin'] },
+      { to: '/standards', label: 'Standards', Icon: FlaskConical, roles: ['supervisor', 'admin'] },
+      { to: '/templates', label: 'Templates', Icon: LayoutTemplate, roles: ['supervisor', 'admin'] },
+      { to: '/audit', label: 'Audit Package', Icon: FileCheck, roles: ['supervisor', 'admin'] },
+    ],
   },
   {
-    to: '/templates',
-    label: 'Templates',
-    Icon: LayoutTemplate,
-    roles: ['supervisor', 'admin'],
-  },
-  {
-    to: '/audit',
-    label: 'Audit Package',
-    Icon: FileCheck,
-    roles: ['supervisor', 'admin'],
+    label: 'Tools',
+    items: [
+      { to: '/calendar', label: 'Calendar', Icon: CalendarDays },
+    ],
   },
 ]
 
@@ -103,11 +109,23 @@ export default function Sidebar({ onClose }: SidebarProps) {
     await refreshProfile()
   }
 
-  const visibleItems = navItems.filter((item) => {
-    if (!item.roles) return true
-    if (!profile) return false
-    return item.roles.includes(profile.role as 'technician' | 'supervisor' | 'admin')
-  })
+  const userRole = profile?.role as 'technician' | 'supervisor' | 'admin' | undefined
+
+  const visibleSections = navSections
+    .filter((section) => {
+      if (!section.roles) return true
+      if (!userRole) return false
+      return section.roles.includes(userRole)
+    })
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (!item.roles) return true
+        if (!userRole) return false
+        return item.roles.includes(userRole)
+      }),
+    }))
+    .filter((section) => section.items.length > 0)
 
   return (
     <aside className="flex flex-col h-full bg-white border-r border-gray-200 w-64 flex-shrink-0">
@@ -141,34 +159,43 @@ export default function Sidebar({ onClose }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-        {visibleItems.map(({ to, label, Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/'}
-            onClick={onClose}
-            className={({ isActive }) =>
-              [
-                'flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors min-h-[48px]',
-                isActive
-                  ? 'bg-brand-50 text-brand-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
-              ].join(' ')
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <Icon
-                  className={[
-                    'w-5 h-5 flex-shrink-0',
-                    isActive ? 'text-brand-600' : 'text-gray-400',
-                  ].join(' ')}
-                />
-                {label}
-              </>
-            )}
-          </NavLink>
+      <nav className="flex-1 overflow-y-auto px-3 py-2">
+        {visibleSections.map((section) => (
+          <div key={section.label}>
+            <p className="px-4 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              {section.label}
+            </p>
+            <div className="space-y-1">
+              {section.items.map(({ to, label, Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === '/'}
+                  onClick={onClose}
+                  className={({ isActive }) =>
+                    [
+                      'flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors min-h-[48px]',
+                      isActive
+                        ? 'bg-brand-50 text-brand-700'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
+                    ].join(' ')
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon
+                        className={[
+                          'w-5 h-5 flex-shrink-0',
+                          isActive ? 'text-brand-600' : 'text-gray-400',
+                        ].join(' ')}
+                      />
+                      {label}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 

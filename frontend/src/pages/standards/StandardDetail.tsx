@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Edit2,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   Shield,
   Tag,
@@ -12,6 +13,7 @@ import {
 import { useAuth } from '../../hooks/useAuth'
 import { useStandards } from '../../hooks/useStandards'
 import { supabase } from '../../lib/supabase'
+import { apiRequest } from '../../lib/api/client'
 import { isStandardExpired, isStandardDueSoon } from '../../types'
 
 // ---------------------------------------------------------------------------
@@ -33,6 +35,7 @@ interface RecentCalibration {
     performed_at: string
     status: string
     asset_id: string
+    recalled_at: string | null
     assets: {
       tag_id: string
     } | null
@@ -104,6 +107,12 @@ export default function StandardDetail() {
   const [recentCals, setRecentCals] = useState<RecentCalibration[]>([])
   const [loadingRelated, setLoadingRelated] = useState(true)
 
+  const [showRecallModal, setShowRecallModal] = useState(false)
+  const [recallReason, setRecallReason] = useState('')
+  const [recalling, setRecalling] = useState(false)
+  const [recallResult, setRecallResult] = useState<{ recalled: number } | null>(null)
+  const [recallError, setRecallError] = useState<string | null>(null)
+
   useEffect(() => {
     if (!id || !profile?.tenant_id) return
 
@@ -114,7 +123,7 @@ export default function StandardDetail() {
 
     const calsQuery = supabase
       .from('calibration_standards_used')
-      .select('record_id, calibration_records(id, performed_at, status, asset_id, assets(tag_id))')
+      .select('record_id, calibration_records(id, performed_at, status, asset_id, recalled_at, assets(tag_id))')
       .eq('standard_id', id)
       .order('record_id', { ascending: false })
       .limit(10)
@@ -175,6 +184,26 @@ export default function StandardDetail() {
   const isDueSoon = isStandardDueSoon(standard, 30)
   const canEdit = profile?.role === 'supervisor' || profile?.role === 'admin'
 
+  async function handleRecallConfirm() {
+    if (!recallReason.trim()) return
+    setRecalling(true)
+    setRecallError(null)
+    try {
+      const result = await apiRequest<{ recalled: number }>(
+        'POST',
+        `/standards/${id}/recall`,
+        { recall_reason: recallReason.trim() },
+      )
+      setRecallResult(result)
+      setShowRecallModal(false)
+      setRecallReason('')
+    } catch (err) {
+      setRecallError(err instanceof Error ? err.message : 'Recall failed')
+    } finally {
+      setRecalling(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -192,16 +221,87 @@ export default function StandardDetail() {
             <p className="text-sm text-gray-500">Master Standard</p>
           </div>
           {canEdit && (
-            <Link
-              to={`/standards/${standard.id}/edit`}
-              className="flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:bg-gray-100"
-            >
-              <Edit2 size={18} />
-              <span className="hidden sm:inline">Edit</span>
-            </Link>
+            <>
+              <button
+                onClick={() => setShowRecallModal(true)}
+                className="flex h-11 items-center gap-2 rounded-xl border border-red-200 bg-white px-4 text-base font-medium text-red-600 shadow-sm hover:bg-red-50 active:bg-red-100"
+              >
+                <AlertTriangle size={18} />
+                <span className="hidden sm:inline">Recall</span>
+              </button>
+              <Link
+                to={`/standards/${standard.id}/edit`}
+                className="flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 active:bg-gray-100"
+              >
+                <Edit2 size={18} />
+                <span className="hidden sm:inline">Edit</span>
+              </Link>
+            </>
           )}
         </div>
       </header>
+
+      {/* Recall result banner */}
+      {recallResult !== null && (
+        <div className="mx-auto max-w-3xl px-4 pt-4 sm:px-6">
+          <div className="flex items-center justify-between rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            <span>Recalled {recallResult.recalled} calibration record{recallResult.recalled !== 1 ? 's' : ''}.</span>
+            <button
+              onClick={() => setRecallResult(null)}
+              className="ml-4 text-green-600 hover:text-green-800"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Recall confirmation modal */}
+      {showRecallModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-gray-900">Recall This Standard?</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              This will flag all calibration records that used{' '}
+              <span className="font-semibold">{standard.name}</span> as recalled. This cannot be undone.
+            </p>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700" htmlFor="recall-reason">
+                Recall Reason <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="recall-reason"
+                type="text"
+                value={recallReason}
+                onChange={(e) => setRecallReason(e.target.value)}
+                placeholder="e.g. Found out-of-tolerance during external audit"
+                className="mt-1 w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+              />
+            </div>
+            {recallError && (
+              <p className="mt-2 text-sm text-red-600">{recallError}</p>
+            )}
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => { setShowRecallModal(false); setRecallReason(''); setRecallError(null) }}
+                disabled={recalling}
+                className="flex h-10 items-center rounded-xl border border-gray-200 px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRecallConfirm}
+                disabled={recalling || !recallReason.trim()}
+                className="flex h-10 items-center gap-2 rounded-xl bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {recalling && <Loader2 size={14} className="animate-spin" />}
+                Confirm Recall
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6 space-y-6">
         {/* Status banner */}
@@ -328,11 +428,18 @@ export default function StandardDetail() {
                         <p className="text-xs text-gray-500">{rec.assets.tag_id}</p>
                       )}
                     </div>
-                    <span
-                      className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[rec.status] ?? 'bg-gray-100 text-gray-600'}`}
-                    >
-                      {STATUS_LABELS[rec.status] ?? rec.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {rec.recalled_at && (
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-700 border border-red-300">
+                          RECALLED
+                        </span>
+                      )}
+                      <span
+                        className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[rec.status] ?? 'bg-gray-100 text-gray-600'}`}
+                      >
+                        {STATUS_LABELS[rec.status] ?? rec.status}
+                      </span>
+                    </div>
                   </Link>
                 )
               })}

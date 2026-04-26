@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CalendarDays, Check } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '../../hooks/useAuth'
 import { supabase } from '../../lib/supabase'
@@ -12,6 +12,21 @@ interface CalAsset {
   instrument_type: string
   serial_number: string | null
 }
+
+interface CalWorkOrder {
+  id: string
+  title: string
+  scheduled_date: string
+  status: string
+}
+
+interface CalCompleted {
+  id: string
+  performed_at: string
+  assets: { tag_id: string } | null
+}
+
+type FilterMode = 'all' | 'due-dates' | 'work-orders' | 'completed'
 
 const INSTRUMENT_LABELS: Record<string, string> = {
   pressure: 'Pressure',
@@ -72,11 +87,16 @@ export default function CalendarView() {
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [filterMode, setFilterMode] = useState<FilterMode>('all')
 
   const year = currentMonth.getFullYear()
   const month = currentMonth.getMonth()
 
-  const { data: assets = [], isLoading } = useQuery({
+  const firstDayOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-01`
+  const lastDayOfMonth = toDateKey(new Date(year, month + 1, 0))
+
+  // Query 1: Assets with upcoming due dates
+  const { data: assets = [], isLoading: assetsLoading } = useQuery({
     queryKey: ['calendar-assets', tenantId],
     queryFn: async () => {
       if (!tenantId) return []
@@ -91,6 +111,40 @@ export default function CalendarView() {
     enabled: !!tenantId,
   })
 
+  // Query 2: Work orders with scheduled dates
+  const { data: workOrders = [] } = useQuery({
+    queryKey: ['calendar-work-orders', tenantId],
+    queryFn: async () => {
+      if (!tenantId) return []
+      const { data, error } = await supabase
+        .from('work_orders')
+        .select('id, title, scheduled_date, status')
+        .eq('tenant_id', tenantId)
+        .not('scheduled_date', 'is', null)
+      if (error) throw error
+      return (data ?? []) as CalWorkOrder[]
+    },
+    enabled: !!tenantId,
+  })
+
+  // Query 3: Completed calibrations this month
+  const { data: completedCals = [] } = useQuery({
+    queryKey: ['calendar-completed-cals', tenantId, firstDayOfMonth, lastDayOfMonth],
+    queryFn: async () => {
+      if (!tenantId) return []
+      const { data, error } = await supabase
+        .from('calibration_records')
+        .select('id, performed_at, assets(tag_id)')
+        .eq('tenant_id', tenantId)
+        .eq('status', 'approved')
+        .gte('performed_at', firstDayOfMonth)
+        .lte('performed_at', lastDayOfMonth)
+      if (error) throw error
+      return (data ?? []) as unknown as CalCompleted[]
+    },
+    enabled: !!tenantId,
+  })
+
   const assetsByDay = useMemo(() => {
     const map = new Map<string, CalAsset[]>()
     for (const asset of assets) {
@@ -101,6 +155,28 @@ export default function CalendarView() {
     }
     return map
   }, [assets])
+
+  const workOrdersByDay = useMemo(() => {
+    const map = new Map<string, CalWorkOrder[]>()
+    for (const wo of workOrders) {
+      const key = toDateKey(new Date(wo.scheduled_date))
+      const existing = map.get(key) ?? []
+      existing.push(wo)
+      map.set(key, existing)
+    }
+    return map
+  }, [workOrders])
+
+  const completedCalsByDay = useMemo(() => {
+    const map = new Map<string, CalCompleted[]>()
+    for (const cal of completedCals) {
+      const key = toDateKey(new Date(cal.performed_at))
+      const existing = map.get(key) ?? []
+      existing.push(cal)
+      map.set(key, existing)
+    }
+    return map
+  }, [completedCals])
 
   const assetsThisMonth = useMemo(() => {
     const start = new Date(year, month, 1)
@@ -137,6 +213,18 @@ export default function CalendarView() {
   }
 
   const selectedAssets = selectedDay ? (assetsByDay.get(selectedDay) ?? []) : null
+  const selectedWorkOrders = selectedDay ? (workOrdersByDay.get(selectedDay) ?? []) : null
+  const selectedCompletedCals = selectedDay ? (completedCalsByDay.get(selectedDay) ?? []) : null
+
+  const hasDetailContent =
+    selectedDay &&
+    (
+      ((filterMode === 'all' || filterMode === 'due-dates') && (selectedAssets?.length ?? 0) > 0) ||
+      ((filterMode === 'all' || filterMode === 'work-orders') && (selectedWorkOrders?.length ?? 0) > 0) ||
+      ((filterMode === 'all' || filterMode === 'completed') && (selectedCompletedCals?.length ?? 0) > 0)
+    )
+
+  const isLoading = assetsLoading
 
   const statusStyles = {
     overdue: 'bg-red-50 text-red-700',
@@ -149,6 +237,13 @@ export default function CalendarView() {
     'due-soon': 'bg-amber-400',
     upcoming: 'bg-green-500',
   }
+
+  const filterPills: { label: string; value: FilterMode }[] = [
+    { label: 'All', value: 'all' },
+    { label: 'Due Dates', value: 'due-dates' },
+    { label: 'Work Orders', value: 'work-orders' },
+    { label: 'Completed', value: 'completed' },
+  ]
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -165,6 +260,24 @@ export default function CalendarView() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6">
+        {/* Filter pill bar */}
+        <div className="mb-4 flex items-center gap-2 flex-wrap">
+          {filterPills.map((pill) => (
+            <button
+              key={pill.value}
+              onClick={() => setFilterMode(pill.value)}
+              className={[
+                'rounded-full px-4 py-1.5 text-sm font-medium transition-colors border',
+                filterMode === pill.value
+                  ? 'bg-brand-500 text-white border-brand-500'
+                  : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50',
+              ].join(' ')}
+            >
+              {pill.label}
+            </button>
+          ))}
+        </div>
+
         <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <button
@@ -202,6 +315,8 @@ export default function CalendarView() {
 
               const key = toDateKey(date)
               const dayAssets = assetsByDay.get(key) ?? []
+              const dayWorkOrders = workOrdersByDay.get(key) ?? []
+              const dayCompletedCals = completedCalsByDay.get(key) ?? []
               const isToday = key === today
               const isPast = key < today
               const hasOverdue = isPast && dayAssets.length > 0
@@ -211,6 +326,10 @@ export default function CalendarView() {
               if (isToday) cellClass += ' bg-brand-50 border-brand-200'
               else if (hasOverdue) cellClass += ' bg-red-50'
               if (isSelected) cellClass += ' ring-2 ring-brand-500 ring-inset'
+
+              const showDueDots = filterMode === 'all' || filterMode === 'due-dates'
+              const showWoDots = filterMode === 'all' || filterMode === 'work-orders'
+              const showCompletedDots = (filterMode === 'all' || filterMode === 'completed') && isPast
 
               return (
                 <div
@@ -222,18 +341,41 @@ export default function CalendarView() {
                     {date.getDate()}
                   </div>
                   <div className="flex flex-wrap gap-0.5">
-                    {dayAssets.slice(0, 3).map((a) => {
+                    {/* Asset due-date dots */}
+                    {showDueDots && dayAssets.slice(0, 3).map((a) => {
                       const st = assetStatus(a.next_due_at)
                       return (
                         <span
-                          key={a.id}
+                          key={`asset-${a.id}`}
                           className={`inline-block h-1.5 w-1.5 rounded-full ${dotStyles[st]}`}
                           title={a.tag_id}
                         />
                       )
                     })}
-                    {dayAssets.length > 3 && (
+                    {showDueDots && dayAssets.length > 3 && (
                       <span className="text-xs text-gray-400 leading-none">+{dayAssets.length - 3}</span>
+                    )}
+                    {/* Work order dots (indigo) */}
+                    {showWoDots && dayWorkOrders.slice(0, 3).map((wo) => (
+                      <span
+                        key={`wo-${wo.id}`}
+                        className="inline-block h-1.5 w-1.5 rounded-full bg-indigo-500"
+                        title={wo.title}
+                      />
+                    ))}
+                    {showWoDots && dayWorkOrders.length > 3 && (
+                      <span className="text-xs text-gray-400 leading-none">+{dayWorkOrders.length - 3}</span>
+                    )}
+                    {/* Completed calibration dots (emerald, past days only) */}
+                    {showCompletedDots && dayCompletedCals.slice(0, 3).map((cal) => (
+                      <span
+                        key={`cal-${cal.id}`}
+                        className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
+                        title={cal.assets?.tag_id ?? 'Calibration'}
+                      />
+                    ))}
+                    {showCompletedDots && dayCompletedCals.length > 3 && (
+                      <span className="text-xs text-gray-400 leading-none">+{dayCompletedCals.length - 3}</span>
                     )}
                   </div>
                 </div>
@@ -242,32 +384,94 @@ export default function CalendarView() {
           </div>
         </div>
 
-        {selectedAssets && selectedAssets.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-gray-200 bg-white shadow-sm p-4">
-            <h2 className="text-base font-semibold text-gray-900 mb-3">
-              Assets due {selectedDay}
+        {/* Day detail panel */}
+        {selectedDay && (
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-white shadow-sm p-4 space-y-4">
+            <h2 className="text-base font-semibold text-gray-900">
+              {selectedDay}
             </h2>
-            <div className="space-y-2">
-              {selectedAssets.map((a) => {
-                const st = assetStatus(a.next_due_at)
-                return (
-                  <Link
-                    key={a.id}
-                    to={`/assets/${a.id}`}
-                    className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-opacity hover:opacity-80 ${statusStyles[st]}`}
-                  >
-                    <span className="font-mono font-semibold">{a.tag_id}</span>
-                    <span>{INSTRUMENT_LABELS[a.instrument_type] ?? a.instrument_type}</span>
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
-        )}
 
-        {selectedAssets && selectedAssets.length === 0 && (
-          <div className="mt-4 rounded-2xl border border-gray-200 bg-white shadow-sm p-4 text-center text-sm text-gray-500">
-            No assets due on this day.
+            {/* Assets due */}
+            {(filterMode === 'all' || filterMode === 'due-dates') && (
+              <>
+                {(selectedAssets?.length ?? 0) > 0 ? (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Assets Due</p>
+                    <div className="space-y-2">
+                      {selectedAssets!.map((a) => {
+                        const st = assetStatus(a.next_due_at)
+                        return (
+                          <Link
+                            key={a.id}
+                            to={`/assets/${a.id}`}
+                            className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-opacity hover:opacity-80 ${statusStyles[st]}`}
+                          >
+                            <span className="font-mono font-semibold">{a.tag_id}</span>
+                            <span>{INSTRUMENT_LABELS[a.instrument_type] ?? a.instrument_type}</span>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : filterMode === 'due-dates' ? (
+                  <p className="text-sm text-gray-500">No assets due on this day.</p>
+                ) : null}
+              </>
+            )}
+
+            {/* Work orders */}
+            {(filterMode === 'all' || filterMode === 'work-orders') && (
+              <>
+                {(selectedWorkOrders?.length ?? 0) > 0 ? (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Work Orders</p>
+                    <div className="space-y-2">
+                      {selectedWorkOrders!.map((wo) => (
+                        <Link
+                          key={wo.id}
+                          to={`/work-orders/${wo.id}`}
+                          className="flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium bg-indigo-50 text-indigo-700 transition-opacity hover:opacity-80"
+                        >
+                          <span className="font-semibold">{wo.title}</span>
+                          <span className="capitalize">{wo.status}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ) : filterMode === 'work-orders' ? (
+                  <p className="text-sm text-gray-500">No work orders scheduled on this day.</p>
+                ) : null}
+              </>
+            )}
+
+            {/* Completed calibrations */}
+            {(filterMode === 'all' || filterMode === 'completed') && (
+              <>
+                {(selectedCompletedCals?.length ?? 0) > 0 ? (
+                  <div>
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Completed Calibrations</p>
+                    <div className="space-y-2">
+                      {selectedCompletedCals!.map((cal) => (
+                        <Link
+                          key={cal.id}
+                          to={`/calibrations/${cal.id}`}
+                          className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium bg-emerald-50 text-emerald-700 transition-opacity hover:opacity-80"
+                        >
+                          <Check className="w-4 h-4 flex-shrink-0" />
+                          <span className="font-mono font-semibold">{cal.assets?.tag_id ?? cal.id}</span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ) : filterMode === 'completed' ? (
+                  <p className="text-sm text-gray-500">No completed calibrations on this day.</p>
+                ) : null}
+              </>
+            )}
+
+            {!hasDetailContent && (
+              <p className="text-sm text-gray-500">Nothing to show for this day with the current filter.</p>
+            )}
           </div>
         )}
 
@@ -335,7 +539,8 @@ export default function CalendarView() {
           )}
         </div>
 
-        <div className="mt-6 flex items-center gap-6 rounded-2xl border border-gray-200 bg-white shadow-sm px-5 py-4">
+        {/* Legend */}
+        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-gray-200 bg-white shadow-sm px-5 py-4">
           <span className="text-sm font-semibold text-gray-600">Legend</span>
           <div className="flex items-center gap-2">
             <span className="inline-block h-3 w-3 rounded-full bg-red-500" />
@@ -347,7 +552,15 @@ export default function CalendarView() {
           </div>
           <div className="flex items-center gap-2">
             <span className="inline-block h-3 w-3 rounded-full bg-green-500" />
-            <span className="text-sm text-gray-700">Upcoming</span>
+            <span className="text-sm text-gray-700">Upcoming Due Date</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-3 w-3 rounded-full bg-indigo-500" />
+            <span className="text-sm text-gray-700">Work Order Scheduled</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-block h-3 w-3 rounded-full bg-emerald-400" />
+            <span className="text-sm text-gray-700">Calibration Completed</span>
           </div>
         </div>
       </main>

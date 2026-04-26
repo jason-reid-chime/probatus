@@ -118,10 +118,11 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(pool))
 
-		// Assets
+		// Assets — specific routes before {id} to avoid chi param collision
 		r.Get("/assets", assetsHandler.List)
 		r.Post("/assets", assetsHandler.Create)
 		r.Get("/assets/tag/{tagId}", assetsHandler.GetByTagID)
+		r.Get("/assets/schedule", assetsHandler.Schedule)
 		r.Get("/assets/{id}", assetsHandler.Get)
 		r.Put("/assets/{id}", assetsHandler.Update)
 		r.Delete("/assets/{id}", assetsHandler.Delete)
@@ -153,6 +154,7 @@ func main() {
 		r.Get("/standards/{id}", standardsHandler.Get)
 		r.Put("/standards/{id}", standardsHandler.Update)
 		r.Delete("/standards/{id}", standardsHandler.Delete)
+		r.Post("/standards/{id}/recall", standardsHandler.Recall)
 
 		// Stats
 		r.Get("/stats/dashboard", statsHandler.Dashboard)
