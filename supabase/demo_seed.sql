@@ -51,7 +51,7 @@ INSERT INTO customers (id, tenant_id, name, address, contact)
 VALUES
   (gen_random_uuid(), v_tenant_id, 'Probatus Inc',
    '966 Pantera Drive, Unit 34, Mississauga, ON L4W 2S1',
-   'maintenance@sheridanautomation.com')
+   'maintenance@probatuscalibration.com')
 RETURNING id INTO v_customer1_id;
 
 INSERT INTO customers (id, tenant_id, name, address, contact)
@@ -215,12 +215,12 @@ VALUES (v_rec3_id, v_std3_id);
 -- ============================================================
 -- 7. Customer Portal Demo User
 -- Creates a Supabase auth user for the customer to log in.
--- Login: portal@sheridanautomation.com / Demo1234!
+-- Login: portal@probatuscalibration.com / Demo1234!
 -- ============================================================
 v_portal_user_id := gen_random_uuid();
 
 -- Check if portal user already exists
-SELECT id INTO v_portal_user_id FROM auth.users WHERE email = 'portal@sheridanautomation.com';
+SELECT id INTO v_portal_user_id FROM auth.users WHERE email = 'portal@probatuscalibration.com';
 
 IF v_portal_user_id IS NULL THEN
   v_portal_user_id := gen_random_uuid();
@@ -231,7 +231,7 @@ IF v_portal_user_id IS NULL THEN
   ) VALUES (
     v_portal_user_id,
     '00000000-0000-0000-0000-000000000000',
-    'portal@sheridanautomation.com',
+    'portal@probatuscalibration.com',
     crypt('Demo1234!', gen_salt('bf')),
     now(), now(), now(),
     '{"provider":"email","providers":["email"]}',
@@ -252,6 +252,6 @@ ON CONFLICT (id) DO UPDATE SET
   customer_id = v_customer1_id;
 
 RAISE NOTICE 'Demo seed complete for tenant: %', v_tenant_id;
-RAISE NOTICE 'Customer portal login: portal@sheridanautomation.com / Demo1234!';
+RAISE NOTICE 'Customer portal login: portal@probatuscalibration.com / Demo1234!';
 
 END $$;

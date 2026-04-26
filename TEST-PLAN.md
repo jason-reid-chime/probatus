@@ -11,7 +11,7 @@
 | Role | Email | Password | Notes |
 |------|-------|----------|-------|
 | Admin | jasonxreid@gmail.com | *(your password)* | Full access — all features |
-| Customer Portal | portal@sheridanautomation.com | Demo1234! | Read-only, Probatus Inc assets only |
+| Customer Portal | portal@probatuscalibration.com | Demo1234! | Read-only, Probatus Inc assets only |
 
 ---
 
@@ -32,7 +32,7 @@
 
 ### 1.2 Customer Portal Sign In
 - Sign out of the admin account.
-- Sign in as `portal@sheridanautomation.com` / `Demo1234!`
+- Sign in as `portal@probatuscalibration.com` / `Demo1234!`
 - **Expected:** Lands on the Customer Portal — different layout (top bar only, no sidebar). Company name "Probatus Inc" shown in header.
 - Sign out and sign back in as admin to continue.
 
@@ -167,7 +167,7 @@ This is the core feature. Walk through the full lifecycle.
 
 ### 7.1 Customer View (Portal Login)
 - Sign out of admin.
-- Sign in as `portal@sheridanautomation.com` / `Demo1234!`
+- Sign in as `portal@probatuscalibration.com` / `Demo1234!`
 - **Expected:** Portal dashboard loads with Probatus Inc assets only (3 assets: SA-PT-001, SA-TT-014, SA-FT-007). The ABC Manufacturing asset should NOT be visible.
 - Check the summary cards (Total, Overdue, Due Within 90 Days, All Current).
 

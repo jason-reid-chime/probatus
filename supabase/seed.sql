@@ -12,11 +12,11 @@
 --
 --   Email                    Password          UUID
 --   -------------------------------------------------------
---   jason@sheridan.ca        Probatus2026!     00000000-0000-0000-0000-000000000001
---   mike@sheridan.ca         Probatus2026!     00000000-0000-0000-0000-000000000002
---   sarah@sheridan.ca        Probatus2026!     00000000-0000-0000-0000-000000000003
+--   jason@probatus.ca        Probatus2026!     00000000-0000-0000-0000-000000000001
+--   mike@probatus.ca         Probatus2026!     00000000-0000-0000-0000-000000000002
+--   sarah@probatus.ca        Probatus2026!     00000000-0000-0000-0000-000000000003
 --
---   CLI: supabase auth users create --email jason@sheridan.ca \
+--   CLI: supabase auth users create --email jason@probatus.ca \
 --          --password Probatus2026! \
 --          --id 00000000-0000-0000-0000-000000000001
 -- =============================================================
@@ -25,9 +25,9 @@
 -- (Supabase local does allow direct inserts during seed)
 insert into auth.users (id, email, encrypted_password, email_confirmed_at, created_at, updated_at, raw_app_meta_data, raw_user_meta_data, aud, role)
 values
-  ('00000000-0000-0000-0000-000000000001', 'jason@sheridan.ca',  '$2a$10$placeholder', now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', 'authenticated', 'authenticated'),
-  ('00000000-0000-0000-0000-000000000002', 'mike@sheridan.ca',   '$2a$10$placeholder', now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', 'authenticated', 'authenticated'),
-  ('00000000-0000-0000-0000-000000000003', 'sarah@sheridan.ca',  '$2a$10$placeholder', now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', 'authenticated', 'authenticated')
+  ('00000000-0000-0000-0000-000000000001', 'jason@probatus.ca',  '$2a$10$placeholder', now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', 'authenticated', 'authenticated'),
+  ('00000000-0000-0000-0000-000000000002', 'mike@probatus.ca',   '$2a$10$placeholder', now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', 'authenticated', 'authenticated'),
+  ('00000000-0000-0000-0000-000000000003', 'sarah@probatus.ca',  '$2a$10$placeholder', now(), now(), now(), '{"provider":"email","providers":["email"]}', '{}', 'authenticated', 'authenticated')
 on conflict (id) do nothing;
 
 -- =============================================================

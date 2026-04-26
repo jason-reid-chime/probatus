@@ -94,14 +94,14 @@ Create these 3 users **with exactly these emails and passwords**:
 
 | Email | Password | Role |
 |-------|----------|------|
-| jason@sheridan.ca | Probatus2026! | Admin |
-| mike@sheridan.ca | Probatus2026! | Supervisor |
-| sarah@sheridan.ca | Probatus2026! | Technician |
+| jason@probatus.ca | Probatus2026! | Admin |
+| mike@probatus.ca | Probatus2026! | Supervisor |
+| sarah@probatus.ca | Probatus2026! | Technician |
 
 > **Important:** After creating each user, click into the user in the dashboard and **manually set the UUID** to match the seed data:
-> - jason@sheridan.ca → `00000000-0000-0000-0000-000000000001`
-> - mike@sheridan.ca → `00000000-0000-0000-0000-000000000002`
-> - sarah@sheridan.ca → `00000000-0000-0000-0000-000000000003`
+> - jason@probatus.ca → `00000000-0000-0000-0000-000000000001`
+> - mike@probatus.ca → `00000000-0000-0000-0000-000000000002`
+> - sarah@probatus.ca → `00000000-0000-0000-0000-000000000003`
 >
 > (Settings → Edit → change the ID field)
 >
@@ -145,8 +145,8 @@ Open http://localhost:5173 in your browser.
 ## Step 10 — Log In
 
 Use any of the test accounts:
-- `jason@sheridan.ca` / `Probatus2026!` → Admin view
-- `sarah@sheridan.ca` / `Probatus2026!` → Technician view (limited nav)
+- `jason@probatus.ca` / `Probatus2026!` → Admin view
+- `sarah@probatus.ca` / `Probatus2026!` → Technician view (limited nav)
 
 ---
 
