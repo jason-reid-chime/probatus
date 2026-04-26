@@ -63,6 +63,46 @@ func (e *emptyRows) RawValues() [][]byte                          { return nil }
 func (e *emptyRows) Conn() *pgx.Conn                              { return nil }
 
 // ---------------------------------------------------------------------------
+// Mock transaction
+// ---------------------------------------------------------------------------
+
+type mockTx struct {
+	execCalls  int
+	execTag    pgconn.CommandTag
+	execErr    error
+	queryRowFn func() pgx.Row
+	commitErr  error
+}
+
+func (t *mockTx) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+	t.execCalls++
+	return t.execTag, t.execErr
+}
+func (t *mockTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+	if t.queryRowFn != nil {
+		return t.queryRowFn()
+	}
+	return &errRow{err: pgx.ErrNoRows}
+}
+func (t *mockTx) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+	return &emptyRows{}, nil
+}
+func (t *mockTx) Commit(_ context.Context) error   { return t.commitErr }
+func (t *mockTx) Rollback(_ context.Context) error { return nil }
+
+// Satisfy remaining pgx.Tx interface methods (unused in handler code).
+func (t *mockTx) Begin(_ context.Context) (pgx.Tx, error)                    { return nil, nil }
+func (t *mockTx) CopyFrom(_ context.Context, _ pgx.Identifier, _ []string, _ pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (t *mockTx) SendBatch(_ context.Context, _ *pgx.Batch) pgx.BatchResults { return nil }
+func (t *mockTx) LargeObjects() pgx.LargeObjects                             { return pgx.LargeObjects{} }
+func (t *mockTx) Prepare(_ context.Context, _, _ string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
+func (t *mockTx) Conn() *pgx.Conn { return nil }
+
+// ---------------------------------------------------------------------------
 // Mock querier
 // ---------------------------------------------------------------------------
 
@@ -72,6 +112,7 @@ type mockDB struct {
 	execTag    pgconn.CommandTag
 	execErr    error
 	beginErr   error
+	tx         *mockTx
 }
 
 func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
@@ -93,7 +134,13 @@ func (m *mockDB) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag,
 }
 
 func (m *mockDB) Begin(_ context.Context) (pgx.Tx, error) {
-	return nil, m.beginErr
+	if m.beginErr != nil {
+		return nil, m.beginErr
+	}
+	if m.tx != nil {
+		return m.tx, nil
+	}
+	return &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +454,84 @@ func TestUpdate_BadJSON(t *testing.T) {
 	h.Update(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestUpdate_BeginTxError(t *testing.T) {
+	h := newHandler(&mockDB{beginErr: fmt.Errorf("conn fail")})
+	body := `{"status":"in_progress","standard_ids":[]}`
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPut, "/calibrations/abc", strings.NewReader(body))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestUpdate_ExecError(t *testing.T) {
+	tx := &mockTx{execErr: fmt.Errorf("db error")}
+	h := newHandler(&mockDB{tx: tx})
+	body := `{"status":"in_progress","standard_ids":[]}`
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPut, "/calibrations/abc", strings.NewReader(body))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestUpdate_NotFound(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 0")}
+	h := newHandler(&mockDB{tx: tx})
+	body := `{"status":"in_progress","standard_ids":[]}`
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPut, "/calibrations/abc", strings.NewReader(body))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestUpdate_Success(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	h := newHandler(&mockDB{tx: tx})
+	body := `{"status":"pending_approval","standard_ids":["std-1","std-2"]}`
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPut, "/calibrations/abc", strings.NewReader(body))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rec.Code)
+	}
+	// UPDATE + DELETE + 2 INSERTs = 4 exec calls
+	if tx.execCalls != 4 {
+		t.Errorf("expected 4 exec calls (update + delete + 2 inserts), got %d", tx.execCalls)
+	}
+}
+
+func TestUpdate_CommitError(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1"), commitErr: fmt.Errorf("commit fail")}
+	h := newHandler(&mockDB{tx: tx})
+	body := `{"status":"in_progress","standard_ids":[]}`
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPut, "/calibrations/abc", strings.NewReader(body))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
 	}
 }
 
