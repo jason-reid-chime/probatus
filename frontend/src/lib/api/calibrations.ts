@@ -98,6 +98,7 @@ export async function upsertCalibrationRecord(
   } else {
     // CREATE new calibration record
     const body: Record<string, unknown> = {
+      id:             record.id,             // client UUID — backend stores it so IDs stay in sync
       asset_id:       record.asset_id,
       performed_at:   record.performed_at,
       sales_number:   record.sales_number   ?? '',

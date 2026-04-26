@@ -249,6 +249,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.UserIDFromCtx(r.Context())
 
 	var body struct {
+		ID           string `json:"id"`             // optional client-generated UUID for offline-first sync
 		AssetID      string `json:"asset_id"`
 		PerformedAt  string `json:"performed_at"`
 		SalesNumber  string `json:"sales_number"`
@@ -281,10 +282,15 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var performedAt time.Time
 	if body.PerformedAt != "" {
 		var err error
-		performedAt, err = time.Parse(time.RFC3339, body.PerformedAt)
+		// Accept both RFC3339 (no fractional seconds) and RFC3339Nano (with fractional
+		// seconds) — JS clients send ISO strings like "2024-01-01T00:00:00.000Z".
+		performedAt, err = time.Parse(time.RFC3339Nano, body.PerformedAt)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid performed_at format, use RFC3339")
-			return
+			performedAt, err = time.Parse(time.RFC3339, body.PerformedAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid performed_at format, use RFC3339")
+				return
+			}
 		}
 	} else {
 		performedAt = time.Now().UTC()
@@ -298,16 +304,32 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 
+	// If the client provided a UUID (offline-first), use it so the local Dexie
+	// record and the server record share the same ID. ON CONFLICT DO NOTHING makes
+	// this idempotent — safe to retry from the outbox.
 	var recID string
-	err = tx.QueryRow(r.Context(),
-		`INSERT INTO calibration_records
-			(tenant_id, asset_id, technician_id, status, performed_at,
-			 sales_number, flag_number, tech_signature, notes, local_id)
-		 VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9)
-		 RETURNING id::text`,
-		tenantID, body.AssetID, userID, performedAt,
-		body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
-	).Scan(&recID)
+	if body.ID != "" {
+		err = tx.QueryRow(r.Context(),
+			`INSERT INTO calibration_records
+				(id, tenant_id, asset_id, technician_id, status, performed_at,
+				 sales_number, flag_number, tech_signature, notes, local_id)
+			 VALUES ($1::uuid,$2,$3,$4,'draft',$5,$6,$7,$8,$9,$10)
+			 ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+			 RETURNING id::text`,
+			body.ID, tenantID, body.AssetID, userID, performedAt,
+			body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
+		).Scan(&recID)
+	} else {
+		err = tx.QueryRow(r.Context(),
+			`INSERT INTO calibration_records
+				(tenant_id, asset_id, technician_id, status, performed_at,
+				 sales_number, flag_number, tech_signature, notes, local_id)
+			 VALUES ($1,$2,$3,'draft',$4,$5,$6,$7,$8,$9)
+			 RETURNING id::text`,
+			tenantID, body.AssetID, userID, performedAt,
+			body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
+		).Scan(&recID)
+	}
 	if err != nil {
 		slog.Error("calibrations.Create: insert failed", "tenant_id", tenantID, "asset_id", body.AssetID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create calibration record")

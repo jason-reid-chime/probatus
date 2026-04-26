@@ -1,7 +1,7 @@
 import { db, type OutboxEntry } from '../db'
 import { supabase } from '../supabase'
 
-const API_URL = import.meta.env.VITE_API_URL as string
+const API_URL = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '') || 'http://localhost:8080'
 
 const MAX_RETRIES = 5
 
@@ -43,15 +43,29 @@ export async function flushOutbox(): Promise<void> {
   }
 }
 
-async function processEntry(entry: OutboxEntry, token: string): Promise<void> {
-  const res = await fetch(`${API_URL}${entry.url}`, {
-    method: entry.method,
+async function doFetch(url: string, method: string, token: string, body: Record<string, unknown> | null | undefined): Promise<Response> {
+  return fetch(url, {
+    method,
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${token}`,
     },
-    body: entry.body != null ? JSON.stringify(entry.body) : undefined,
+    body: body != null ? JSON.stringify(body) : undefined,
   })
+}
+
+async function processEntry(entry: OutboxEntry, token: string): Promise<void> {
+  let res = await doFetch(`${API_URL}${entry.url}`, entry.method, token, entry.body)
+
+  // Recovery: a PUT to /calibrations/{id} that returns 404 means the record was
+  // never created in the backend (e.g. saved offline before this bug was fixed).
+  // Retry as POST to /calibrations — the backend now accepts the client UUID in
+  // the body and will create the record with that ID, keeping Dexie in sync.
+  if (!res.ok && res.status === 404 && entry.method === 'PUT' && /^\/calibrations\/[^/]+$/.test(entry.url) && entry.body?.asset_id) {
+    console.info(`[outbox] PUT 404 — retrying as POST for ${entry.url}`)
+    res = await doFetch(`${API_URL}/calibrations`, 'POST', token, entry.body)
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
     throw new Error(`${res.status}: ${text}`)

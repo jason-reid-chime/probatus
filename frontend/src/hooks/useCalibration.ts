@@ -133,6 +133,8 @@ export interface SaveCalibrationInput {
   record: LocalCalibrationRecord
   measurements: LocalMeasurement[]
   standardIds?: string[]
+  /** True when this is the first save (record doesn't exist in the backend yet). */
+  isNewRecord?: boolean
 }
 
 export function useSaveCalibration() {
@@ -143,6 +145,7 @@ export function useSaveCalibration() {
       record,
       measurements,
       standardIds = [],
+      isNewRecord = false,
     }: SaveCalibrationInput): Promise<LocalCalibrationRecord> => {
       // 1. Write to Dexie immediately (offline-first)
       await db.calibration_records.put(record)
@@ -150,12 +153,17 @@ export function useSaveCalibration() {
         await db.measurements.bulkPut(measurements)
       }
 
-      // 2. Enqueue calibration record in outbox (POST for new, PUT for existing)
+      // 2. Enqueue in outbox.
+      // New records use POST and include the client UUID so the backend creates the
+      // record with the same ID as Dexie — keeping both sides in sync without
+      // needing a UUID translation layer.
+      // Existing records use PUT (the ID is already known on both sides).
       await enqueue({
-        method: record.id ? 'PUT' : 'POST',
-        url:    record.id ? `/calibrations/${record.id}` : '/calibrations',
+        method: isNewRecord ? 'POST' : 'PUT',
+        url:    isNewRecord ? '/calibrations' : `/calibrations/${record.id}`,
         body:   {
           ...(record as unknown as Record<string, unknown>),
+          id:           record.id,       // client UUID, accepted by backend for new records
           standard_ids: standardIds,
           measurements: measurements as unknown as Record<string, unknown>[],
         },
@@ -177,14 +185,15 @@ export function useSaveCalibration() {
               ),
             ])
 
-          const saved = await withTimeout(upsertCalibrationRecord(record, { standardIds, measurements }))
+          const saved = await withTimeout(upsertCalibrationRecord(record, { standardIds, measurements, isExisting: !isNewRecord }))
           await withTimeout(upsertMeasurements(measurements))
           await withTimeout(upsertCalibrationStandards(record.id, standardIds))
 
-          // Clean up outbox entries now that sync succeeded — prevents double-flush
-          const calibrationUrl = record.id ? `/calibrations/${record.id}` : '/calibrations'
+          // Clean up outbox entries now that sync succeeded — prevents double-flush.
+          // New records are enqueued at /calibrations (POST); existing at /calibrations/{id} (PUT).
+          const calibrationUrl = isNewRecord ? '/calibrations' : `/calibrations/${record.id}`
           const outboxEntries = await db.outbox
-            .filter((e) => e.url === calibrationUrl)
+            .filter((e) => e.url === calibrationUrl && (e.body as Record<string,unknown>)?.id === record.id)
             .toArray()
           if (outboxEntries.length > 0) {
             await db.outbox.bulkDelete(outboxEntries.map((e) => e.id!))

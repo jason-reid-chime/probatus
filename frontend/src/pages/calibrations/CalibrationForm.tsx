@@ -612,6 +612,7 @@ export default function CalibrationForm() {
         record: record as Parameters<typeof saveCalibration.mutateAsync>[0]['record'],
         measurements: liveMeasurements,
         standardIds: selectedStandardIds,
+        isNewRecord: !existingRecordId,
       })
 
       setToast(isOnline() ? 'Saved' : 'Saved offline — will sync when online')

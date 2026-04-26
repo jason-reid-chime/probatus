@@ -8,7 +8,7 @@ import { apiRequest, API_URL } from '../../lib/api/client'
 import SignaturePad from '../../components/SignaturePad'
 import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
-import { enqueue } from '../../lib/sync/outbox'
+import { flushOutbox } from '../../lib/sync/outbox'
 import { overallResult, computeCombinedUncertainty } from '../../utils/calibrationMath'
 import type { LocalMeasurement } from '../../lib/db'
 
@@ -307,6 +307,11 @@ export default function CalibrationDetail() {
     setSubmitError(null)
 
     try {
+      // Flush any pending outbox entries for this record first — if the initial
+      // create hasn't synced yet the backend won't know about this UUID, causing
+      // the subsequent PUT and approve calls to 404.
+      await flushOutbox()
+
       const updated = {
         ...record,
         status: 'pending_approval' as const,
@@ -316,23 +321,8 @@ export default function CalibrationDetail() {
       // Write to Dexie
       await db.calibration_records.put(updated)
 
-      // Enqueue in outbox
-      await enqueue({
-        method: 'PUT',
-        url:    `/calibrations/${updated.id}`,
-        body:   updated as unknown as Record<string, unknown>,
-      })
-
-      // Attempt online update
-      try {
-        const { supabase } = await import('../../lib/supabase')
-        await supabase
-          .from('calibration_records')
-          .update({ status: 'pending_approval', updated_at: updated.updated_at })
-          .eq('id', record.id)
-      } catch {
-        // Offline — outbox will sync when connectivity returns
-      }
+      // Update via backend API
+      await apiRequest('PUT', `/calibrations/${updated.id}`, updated)
 
       queryClient.setQueryData(calibrationKeys.detail(record.id), updated)
     } catch (err) {
