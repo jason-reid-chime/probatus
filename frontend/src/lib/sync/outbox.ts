@@ -72,6 +72,7 @@ export async function enqueue(
  * payload sent to the backend. This function is a no-op kept for backwards
  * compatibility with callers that have not yet been migrated.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function enqueueStandardsReplace(_recordId: string, _standardIds: string[]): Promise<void> {
   // No-op: the backend handles standards as part of calibration create/update body.
   // Callers should pass standard_ids in the calibration enqueue body instead.
