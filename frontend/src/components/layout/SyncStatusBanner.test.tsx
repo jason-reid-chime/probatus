@@ -3,7 +3,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SyncStatusBanner from './SyncStatusBanner'
 
-vi.mock('../../hooks/useOutboxCount')
+// Factory mock: an automock would still load the real module (and the Supabase
+// client it imports, which throws without env vars in CI).
+vi.mock('../../hooks/useOutboxCount', () => ({ useOutboxCount: vi.fn() }))
 vi.mock('../../lib/sync/outbox', () => ({
   retryFailed: vi.fn().mockResolvedValue(undefined),
   flushOutbox: vi.fn().mockResolvedValue(undefined),
