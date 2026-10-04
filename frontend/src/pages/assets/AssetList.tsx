@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { QrCode, Plus, Search, X, ClipboardList } from 'lucide-react'
+import { QrCode, Plus, Search, X, ClipboardList, Printer } from 'lucide-react'
 import { useAssets } from '../../hooks/useAssets'
 import { useQrScanner } from '../../hooks/useQrScanner'
 import { useCustomerFilter } from '../../hooks/useCustomerFilter'
 import type { LocalAsset } from '../../lib/db'
+import { resolveScan } from '../../lib/labels'
 
 // ---------------------------------------------------------------------------
 // Status helpers
@@ -221,12 +222,19 @@ export default function AssetList() {
     }
   }
 
+  // Scan-to-open: our labels encode the asset URL; a bare tag that matches
+  // exactly one asset opens it too. Anything else filters the list.
   const handleQrScan = useCallback(
-    (tagId: string) => {
-      navigate(`/assets?tag=${encodeURIComponent(tagId)}`)
-      setSearch(tagId)
+    (text: string) => {
+      const hit = resolveScan(text, assets ?? [])
+      if (hit.kind === 'asset') {
+        navigate(`/assets/${hit.id}`)
+        return
+      }
+      navigate(`/assets?tag=${encodeURIComponent(hit.tag)}`)
+      setSearch(hit.tag)
     },
-    [navigate],
+    [navigate, assets],
   )
 
   const filtered = (assets ?? []).filter((a) => {
@@ -266,6 +274,14 @@ export default function AssetList() {
               <QrCode size={20} />
               <span className="hidden sm:inline">Scan QR</span>
             </button>
+            <Link
+              to={`/assets/labels?ids=${filtered.map((a) => a.id).join(',')}`}
+              className="flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+              aria-label={`Print labels for ${filtered.length} listed assets`}
+            >
+              <Printer size={20} aria-hidden />
+              <span className="hidden sm:inline">Labels</span>
+            </Link>
             <Link
               to="/assets/new"
               className="flex h-11 items-center gap-2 rounded-xl bg-brand-500 px-4 text-base font-medium text-white shadow-sm hover:bg-brand-700 active:opacity-80"

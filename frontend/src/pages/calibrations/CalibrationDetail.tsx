@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Upload, Send, Trash2, Pencil, Loader2 } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Send, Trash2, Pencil, Loader2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
 import { apiRequest, API_URL } from '../../lib/api/client'
@@ -11,6 +11,8 @@ import { db, type LocalCalibrationRecord } from '../../lib/db'
 import { flushOutbox, retryFailed } from '../../lib/sync/outbox'
 import { overallResult, computeCombinedUncertainty } from '../../utils/calibrationMath'
 import type { LocalMeasurement } from '../../lib/db'
+import DocumentsPanel from '../../components/documents/DocumentsPanel'
+import RecordHistory from '../../components/activity/RecordHistory'
 
 // ---------------------------------------------------------------------------
 // Status badge
@@ -267,9 +269,6 @@ export default function CalibrationDetail() {
   const [approveError, setApproveError] = useState<string | null>(null)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [pdfError, setPdfError] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [emailRecipient, setEmailRecipient] = useState('')
   const [sendingEmail, setSendingEmail] = useState(false)
   const [emailError, setEmailError] = useState<string | null>(null)
@@ -511,48 +510,6 @@ export default function CalibrationDetail() {
       setEmailError(err instanceof Error ? err.message : 'Failed to send email')
     } finally {
       setSendingEmail(false)
-    }
-  }
-
-  async function handleCertificateUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file || !record || !profile) return
-    setUploading(true)
-    setUploadError(null)
-    try {
-      const path = `${record.tenant_id}/${record.id}.pdf`
-      const { error: uploadErr } = await supabase.storage
-        .from('certificates')
-        .upload(path, file, { upsert: true, contentType: 'application/pdf' })
-      if (uploadErr) throw uploadErr
-
-      const { data: urlData } = supabase.storage
-        .from('certificates')
-        .getPublicUrl(path)
-      const publicUrl = urlData.publicUrl
-
-      const updated: LocalCalibrationRecord = {
-        ...record,
-        certificate_url: publicUrl,
-        updated_at: new Date().toISOString(),
-      }
-
-      await db.calibration_records.put(updated)
-
-      await supabase
-        .from('calibration_records')
-        .update({ certificate_url: publicUrl, updated_at: updated.updated_at })
-        .eq('id', record.id)
-
-      queryClient.setQueryData(
-        calibrationKeys.detail(record.id),
-        updated,
-      )
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed')
-    } finally {
-      setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
@@ -843,26 +800,13 @@ export default function CalibrationDetail() {
             </a>
           </div>
         ) : (
-          <div className="space-y-2">
-            <p className="text-sm text-gray-500">Attach a PDF certificate from an external calibration lab.</p>
-            <label className={`w-full inline-flex items-center justify-center gap-2 border border-dashed border-gray-300 hover:border-brand-400 bg-gray-50 hover:bg-brand-50 text-gray-600 hover:text-brand-700 font-medium text-sm rounded-xl min-h-[48px] px-4 py-3 cursor-pointer transition-colors ${uploading ? 'opacity-60 pointer-events-none' : ''}`}>
-              <Upload size={16} />
-              {uploading ? 'Uploading…' : 'Upload Certificate PDF'}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                className="sr-only"
-                onChange={handleCertificateUpload}
-                disabled={uploading}
-              />
-            </label>
-            {uploadError && (
-              <p className="text-sm text-red-600">{uploadError}</p>
-            )}
-          </div>
+          <p className="text-sm text-gray-500">No certificate link. Upload external certificates under Documents below{canEditCertUrl ? ', or link one with the pencil' : ''}.</p>
         )}
       </div>
+
+      {/* Documents (multiple per record) and change history */}
+      <DocumentsPanel recordId={record.id} />
+      <RecordHistory recordId={record.id} title="Change history" />
 
       {/* Delete calibration */}
       {canDelete && (

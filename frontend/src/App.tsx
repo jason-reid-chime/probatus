@@ -33,6 +33,12 @@ import BatchSession from './pages/calibrations/BatchSession'
 import ScheduleView from './pages/assets/ScheduleView'
 import Signup from './pages/Signup'
 import NotFound from './pages/NotFound'
+import ActivityLog from './pages/activity/ActivityLog'
+import AnalyticsPage from './pages/analytics/Analytics'
+import InvoicesList from './pages/invoices/InvoicesList'
+import InvoiceDetail from './pages/invoices/InvoiceDetail'
+import AlertSettings from './pages/settings/AlertSettings'
+import AssetLabels from './pages/assets/AssetLabels'
 import { OUTBOX_FLUSHED_EVENT } from './lib/sync/outbox'
 
 const queryClient = new QueryClient({
@@ -78,6 +84,7 @@ export default function App() {
               <Route index element={<Dashboard />} />
               <Route path="assets" element={<AssetList />} />
               <Route path="assets/new" element={<AssetForm />} />
+              <Route path="assets/labels" element={<AssetLabels />} />
               <Route path="assets/:id" element={<AssetDetail />} />
               <Route path="assets/:id/edit" element={<AssetForm />} />
               <Route path="calibrations" element={<CalibrationList />} />
@@ -103,6 +110,11 @@ export default function App() {
               <Route path="work-orders/:id/edit" element={<WorkOrderForm />} />
               <Route path="calibrations/batch" element={<BatchSession />} />
               <Route path="schedule" element={<ScheduleView />} />
+              <Route path="activity" element={<ActivityLog />} />
+              <Route path="analytics" element={<AnalyticsPage />} />
+              <Route path="invoices" element={<InvoicesList />} />
+              <Route path="invoices/:id" element={<InvoiceDetail />} />
+              <Route path="settings/alerts" element={<AlertSettings />} />
               <Route path="dashboard" element={<Navigate to="/" replace />} />
               <Route path="*" element={<NotFound />} />
             </Route>

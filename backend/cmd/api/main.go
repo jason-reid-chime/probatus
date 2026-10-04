@@ -13,13 +13,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/jasonreid/probatus/internal/activity"
 	"github.com/jasonreid/probatus/internal/assets"
 	"github.com/jasonreid/probatus/internal/audit"
 	"github.com/jasonreid/probatus/internal/calibrations"
 	"github.com/jasonreid/probatus/internal/certificates"
 	"github.com/jasonreid/probatus/internal/customers"
 	"github.com/jasonreid/probatus/internal/db"
+	"github.com/jasonreid/probatus/internal/invoices"
 	"github.com/jasonreid/probatus/internal/middleware"
+	"github.com/jasonreid/probatus/internal/notifications"
 	"github.com/jasonreid/probatus/internal/standards"
 	"github.com/jasonreid/probatus/internal/stats"
 	"github.com/jasonreid/probatus/internal/templates"
@@ -76,16 +79,30 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Writes go through the actor pool so the activity log records who made
+	// each change (see internal/db/actor.go).
+	actorPool := db.NewActorPool(pool)
+
 	// Instantiate handlers.
-	assetsHandler := assets.NewHandler(pool)
-	calibrationsHandler := calibrations.NewHandler(pool)
-	customersHandler := customers.NewHandler(pool)
-	standardsHandler := standards.NewHandler(pool)
+	assetsHandler := assets.NewHandler(actorPool)
+	calibrationsHandler := calibrations.NewHandler(actorPool)
+	customersHandler := customers.NewHandler(actorPool)
+	standardsHandler := standards.NewHandler(actorPool)
 	certificatesHandler := certificates.NewHandler(pool)
-	statsHandler := stats.NewHandler(pool)
-	templatesHandler := templates.NewHandler(pool)
+	statsHandler := stats.NewHandler(actorPool)
+	templatesHandler := templates.NewHandler(actorPool)
 	auditHandler := audit.NewHandler(pool)
-	workordersHandler := workorders.NewHandler(pool)
+	workordersHandler := workorders.NewHandler(actorPool)
+	activityHandler := activity.NewHandler(actorPool)
+	invoicesHandler := invoices.NewHandler(actorPool)
+	notificationsHandler := notifications.NewHandler(actorPool)
+
+	// Due / overdue email alerts. Set ALERTS_DISABLED=1 to turn the scheduler
+	// off (e.g. on a second instance or locally); claims in notifications_sent
+	// keep concurrent instances from double-sending either way.
+	if os.Getenv("ALERTS_DISABLED") == "" {
+		notificationsHandler.Start(ctx, time.Hour)
+	}
 
 	r := chi.NewRouter()
 
@@ -151,6 +168,25 @@ func main() {
 		r.Put("/work-orders/{id}", workordersHandler.Update)
 		r.Delete("/work-orders/{id}", workordersHandler.Delete)
 		r.Patch("/work-orders/{id}/status", workordersHandler.UpdateStatus)
+		r.Post("/work-orders/{id}/invoice", invoicesHandler.FromWorkOrder)
+
+		// Invoices
+		r.Get("/invoices", invoicesHandler.List)
+		r.Post("/invoices", invoicesHandler.Create)
+		r.Get("/invoices/{id}", invoicesHandler.Get)
+		r.Put("/invoices/{id}", invoicesHandler.Update)
+		r.Delete("/invoices/{id}", invoicesHandler.Delete)
+		r.Patch("/invoices/{id}/status", invoicesHandler.UpdateStatus)
+
+		// Activity log
+		r.Get("/activity", activityHandler.List)
+		r.Get("/activity/verify", activityHandler.Verify)
+
+		// Due-date alerts
+		r.Get("/notifications/settings", notificationsHandler.GetSettings)
+		r.Put("/notifications/settings", notificationsHandler.PutSettings)
+		r.Get("/notifications/history", notificationsHandler.History)
+		r.Post("/notifications/run", notificationsHandler.RunNow)
 
 		// Customers
 		r.Get("/customers", customersHandler.List)
@@ -168,6 +204,7 @@ func main() {
 
 		// Stats
 		r.Get("/stats/dashboard", statsHandler.Dashboard)
+		r.Get("/stats/analytics", statsHandler.Analytics)
 
 		// Audit
 		r.Post("/audit/package", auditHandler.Generate)

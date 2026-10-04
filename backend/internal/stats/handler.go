@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jasonreid/probatus/internal/db"
 
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
-// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+// querier is the minimal DB interface used by Handler. *db.ActorPool satisfies this.
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
@@ -24,7 +24,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new stats Handler.
-func NewHandler(pool *pgxpool.Pool) *Handler {
+func NewHandler(pool db.Pool) *Handler {
 	return &Handler{pool: pool}
 }
 
@@ -40,11 +40,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // DashboardResponse is the shape returned by the /stats/dashboard endpoint.
 type DashboardResponse struct {
-	OverdueCount           int     `json:"overdue_count"`
-	DueWithin30            int     `json:"due_within_30"`
-	DueWithin90            int     `json:"due_within_90"`
-	StandardsExpiringSoon  int     `json:"standards_expiring_soon"`
-	PassRate30d            float64 `json:"pass_rate_30d"`
+	OverdueCount          int     `json:"overdue_count"`
+	DueWithin30           int     `json:"due_within_30"`
+	DueWithin90           int     `json:"due_within_90"`
+	StandardsExpiringSoon int     `json:"standards_expiring_soon"`
+	PassRate30d           float64 `json:"pass_rate_30d"`
 }
 
 // Dashboard returns aggregated calibration statistics for the authenticated tenant.

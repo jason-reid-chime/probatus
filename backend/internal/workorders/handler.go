@@ -19,13 +19,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jasonreid/probatus/internal/db"
 
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
 // querier is the minimal DB interface used by Handler.
-// *pgxpool.Pool satisfies this interface.
+// *db.ActorPool satisfies this interface.
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -39,7 +39,7 @@ type Handler struct {
 }
 
 // NewHandler creates a new work orders Handler.
-func NewHandler(pool *pgxpool.Pool) *Handler {
+func NewHandler(pool db.Pool) *Handler {
 	return &Handler{pool: pool}
 }
 
@@ -247,13 +247,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Title          string   `json:"title"`
-		Notes          *string  `json:"notes"`
-		ScheduledDate  string   `json:"scheduled_date"`
-		Status         string   `json:"status"`
-		CustomerID     *string  `json:"customer_id"`
-		AssetIDs       []string `json:"asset_ids"`
-		TechnicianIDs  []string `json:"technician_ids"`
+		Title         string   `json:"title"`
+		Notes         *string  `json:"notes"`
+		ScheduledDate string   `json:"scheduled_date"`
+		Status        string   `json:"status"`
+		CustomerID    *string  `json:"customer_id"`
+		AssetIDs      []string `json:"asset_ids"`
+		TechnicianIDs []string `json:"technician_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

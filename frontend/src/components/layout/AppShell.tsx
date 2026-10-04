@@ -40,16 +40,19 @@ export default function AppShell() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
-      {/* Offline sync status */}
-      <SyncStatusBanner />
+    <div className="min-h-screen flex flex-col bg-gray-50 print:bg-white">
+      {/* App chrome is hidden when printing (invoices, labels) */}
+      <div className="print:hidden">
+        {/* Offline sync status */}
+        <SyncStatusBanner />
 
-      {/* Mobile header */}
-      <Header onMenuClick={() => setSidebarOpen(true)} />
+        {/* Mobile header */}
+        <Header onMenuClick={() => setSidebarOpen(true)} />
+      </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden print:overflow-visible">
         {/* Desktop sidebar — always visible on md+ */}
-        <div className="hidden md:flex md:flex-shrink-0">
+        <div className="hidden md:flex md:flex-shrink-0 print:hidden">
           <Sidebar />
         </div>
 
@@ -74,7 +77,7 @@ export default function AppShell() {
         )}
 
         {/* Main content */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto print:overflow-visible">
           <Outlet />
         </main>
       </div>

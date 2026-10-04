@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { isOnline, toggleForcedOffline, isForcedOffline, startConnectivityMonitor } from './connectivity'
+import { isOnline, toggleForcedOffline, isForcedOffline, startConnectivityMonitor, PERIODIC_FLUSH_MS } from './connectivity'
 
 // Mock the outbox so we don't pull in Dexie/Supabase
 vi.mock('./outbox', () => ({
@@ -111,5 +111,17 @@ describe('startConnectivityMonitor', () => {
     mockFlushOutbox.mockClear()
     window.dispatchEvent(new Event('online'))
     expect(mockFlushOutbox).not.toHaveBeenCalled()
+  })
+
+  it('retries periodically while online, and stops after cleanup', () => {
+    vi.useFakeTimers()
+    const cleanup = startConnectivityMonitor()
+    mockFlushOutbox.mockClear()
+    vi.advanceTimersByTime(PERIODIC_FLUSH_MS)
+    expect(mockFlushOutbox).toHaveBeenCalledTimes(1)
+    cleanup()
+    vi.advanceTimersByTime(PERIODIC_FLUSH_MS * 2)
+    expect(mockFlushOutbox).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 })

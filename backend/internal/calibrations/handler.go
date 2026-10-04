@@ -17,13 +17,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jasonreid/probatus/internal/db"
 
 	"github.com/jasonreid/probatus/internal/email"
 	"github.com/jasonreid/probatus/internal/middleware"
 )
 
-// querier is the minimal DB interface used by Handler. *pgxpool.Pool satisfies this.
+// querier is the minimal DB interface used by Handler. *db.ActorPool satisfies this.
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -37,41 +37,41 @@ type Handler struct {
 }
 
 // NewHandler creates a new calibrations Handler.
-func NewHandler(pool *pgxpool.Pool) *Handler {
+func NewHandler(pool db.Pool) *Handler {
 	return &Handler{pool: pool}
 }
 
 // CalibrationRecord represents a calibration_records row.
 type CalibrationRecord struct {
-	ID                 string       `json:"id"`
-	TenantID           string       `json:"tenant_id"`
-	AssetID            string       `json:"asset_id"`
-	TechnicianID       string       `json:"technician_id"`
-	SupervisorID       *string      `json:"supervisor_id,omitempty"`
-	Status             string       `json:"status"`
-	PerformedAt        time.Time    `json:"performed_at"`
-	ApprovedAt         *time.Time   `json:"approved_at,omitempty"`
-	SalesNumber        string       `json:"sales_number"`
-	FlagNumber         string       `json:"flag_number"`
-	TechSignature      string       `json:"tech_signature"`
-	SupervisorSig      string       `json:"supervisor_signature"`
-	CertificateURL     string       `json:"certificate_url"`
-	Notes              string       `json:"notes"`
-	LocalID            string       `json:"local_id"`
-	Measurements       []Measurement `json:"measurements,omitempty"`
+	ID             string        `json:"id"`
+	TenantID       string        `json:"tenant_id"`
+	AssetID        string        `json:"asset_id"`
+	TechnicianID   string        `json:"technician_id"`
+	SupervisorID   *string       `json:"supervisor_id,omitempty"`
+	Status         string        `json:"status"`
+	PerformedAt    time.Time     `json:"performed_at"`
+	ApprovedAt     *time.Time    `json:"approved_at,omitempty"`
+	SalesNumber    string        `json:"sales_number"`
+	FlagNumber     string        `json:"flag_number"`
+	TechSignature  string        `json:"tech_signature"`
+	SupervisorSig  string        `json:"supervisor_signature"`
+	CertificateURL string        `json:"certificate_url"`
+	Notes          string        `json:"notes"`
+	LocalID        string        `json:"local_id"`
+	Measurements   []Measurement `json:"measurements,omitempty"`
 }
 
 // Measurement represents a calibration_measurements row.
 type Measurement struct {
-	ID           string   `json:"id"`
-	RecordID     string   `json:"record_id"`
-	PointLabel   string   `json:"point_label"`
+	ID            string  `json:"id"`
+	RecordID      string  `json:"record_id"`
+	PointLabel    string  `json:"point_label"`
 	StandardValue float64 `json:"standard_value"`
 	MeasuredValue float64 `json:"measured_value"`
-	Unit         string   `json:"unit"`
-	Pass         bool     `json:"pass"`
-	ErrorPct     float64  `json:"error_pct"`
-	Notes        string   `json:"notes"`
+	Unit          string  `json:"unit"`
+	Pass          bool    `json:"pass"`
+	ErrorPct      float64 `json:"error_pct"`
+	Notes         string  `json:"notes"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -806,16 +806,16 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 	// 1. Load calibration record.
 	// -------------------------------------------------------------------------
 	var rec struct {
-		localID        string
-		performedAt    time.Time
-		technicianID   string
-		supervisorID   string
-		assetID        string
-		techSignature  string
-		supervisorSig  string
-		salesNumber    string
-		flagNumber     string
-		notes          string
+		localID       string
+		performedAt   time.Time
+		technicianID  string
+		supervisorID  string
+		assetID       string
+		techSignature string
+		supervisorSig string
+		salesNumber   string
+		flagNumber    string
+		notes         string
 	}
 	err := pool.QueryRow(ctx,
 		`SELECT COALESCE(local_id,''), performed_at, technician_id::text,
@@ -1132,11 +1132,11 @@ func buildMinimalPDF(p buildCertHTMLParams) []byte {
 
 	// Build the content stream: position text at top-left with 12pt Courier.
 	const (
-		fontSize  = 10.0
-		leading   = 14.0
-		marginL   = 50.0
-		pageH     = 841.89 // A4 height in points
-		startY    = 800.0
+		fontSize = 10.0
+		leading  = 14.0
+		marginL  = 50.0
+		pageH    = 841.89 // A4 height in points
+		startY   = 800.0
 	)
 
 	var cs strings.Builder

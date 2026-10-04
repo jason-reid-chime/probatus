@@ -15,6 +15,10 @@ import {
   Briefcase,
   Layers,
   CalendarClock,
+  ScrollText,
+  BarChart3,
+  Receipt,
+  BellRing,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
@@ -72,6 +76,16 @@ const navSections: NavSection[] = [
       { to: '/standards', label: 'Standards', Icon: FlaskConical, roles: ['supervisor', 'admin'] },
       { to: '/templates', label: 'Templates', Icon: LayoutTemplate, roles: ['supervisor', 'admin'] },
       { to: '/audit', label: 'Audit Package', Icon: FileCheck, roles: ['supervisor', 'admin'] },
+      { to: '/activity', label: 'Activity Log', Icon: ScrollText, roles: ['supervisor', 'admin'] },
+    ],
+  },
+  {
+    label: 'Business',
+    roles: ['supervisor', 'admin'],
+    items: [
+      { to: '/invoices', label: 'Invoices', Icon: Receipt, roles: ['supervisor', 'admin'] },
+      { to: '/analytics', label: 'Analytics', Icon: BarChart3, roles: ['supervisor', 'admin'] },
+      { to: '/settings/alerts', label: 'Due Alerts', Icon: BellRing, roles: ['supervisor', 'admin'] },
     ],
   },
   {

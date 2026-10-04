@@ -91,7 +91,7 @@ func (t *mockTx) Commit(_ context.Context) error   { return t.commitErr }
 func (t *mockTx) Rollback(_ context.Context) error { return nil }
 
 // Satisfy remaining pgx.Tx interface methods (unused in handler code).
-func (t *mockTx) Begin(_ context.Context) (pgx.Tx, error)                    { return nil, nil }
+func (t *mockTx) Begin(_ context.Context) (pgx.Tx, error) { return nil, nil }
 func (t *mockTx) CopyFrom(_ context.Context, _ pgx.Identifier, _ []string, _ pgx.CopyFromSource) (int64, error) {
 	return 0, nil
 }

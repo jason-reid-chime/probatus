@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Pencil, Trash2, Loader2, FlaskConical, Users } from 'lucide-react'
 import { useWorkOrder, useDeleteWorkOrder } from '../../hooks/useWorkOrders'
 import { useAuth } from '../../hooks/useAuth'
+import CreateInvoicePanel from './CreateInvoicePanel'
 
 const STATUS_BADGE: Record<string, string> = {
   open: 'bg-blue-100 text-blue-700 border border-blue-200',
@@ -198,6 +199,9 @@ export default function WorkOrderDetail() {
               </div>
             )}
           </div>
+          {canEdit && wo.status === 'completed' && (
+            <CreateInvoicePanel workOrderId={wo.id} assetCount={wo.assets.length} />
+          )}
         </>
       )}
 

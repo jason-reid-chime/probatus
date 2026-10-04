@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import {
   ArrowLeft,
   Edit2,
+  Printer,
   ClipboardList,
   FlaskConical,
   Tag,
@@ -27,6 +28,8 @@ import { apiRequest } from '../../lib/api/client'
 import { useAuth } from '../../hooks/useAuth'
 import type { LocalMeasurement } from '../../lib/db'
 import DriftChart from '../../components/calibrations/DriftChart'
+import DocumentsPanel from '../../components/documents/DocumentsPanel'
+import RecordHistory from '../../components/activity/RecordHistory'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -323,6 +326,14 @@ export default function AssetDetail() {
               {INSTRUMENT_LABELS[asset.instrument_type] ?? asset.instrument_type}
             </p>
           </div>
+          <Link
+            to={`/assets/labels?ids=${asset.id}`}
+            aria-label="Print label"
+            className="flex h-11 items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+          >
+            <Printer size={18} aria-hidden />
+            <span className="hidden sm:inline">Label</span>
+          </Link>
           {canManage && (
             <>
               <Link
@@ -514,6 +525,11 @@ export default function AssetDetail() {
             </div>
           </div>
         )}
+
+        {/* Every document attached to this instrument or its calibrations */}
+        <DocumentsPanel assetId={asset.id} />
+
+        <RecordHistory recordId={asset.id} title="Change history" />
       </main>
 
       {deletingAsset && (
