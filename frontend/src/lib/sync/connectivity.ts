@@ -20,9 +20,15 @@ export function isForcedOffline(): boolean {
   return _forcedOffline
 }
 
+/** How often pending entries are retried while the device reports online. */
+export const PERIODIC_FLUSH_MS = 30_000
+
 /**
  * Registers online/offline listeners.
- * Automatically flushes the outbox when connectivity returns.
+ * Automatically flushes the outbox when connectivity returns, and retries
+ * periodically while online — the `online` event never fires when the device
+ * stays connected but the API was down, so without this, entries sit pending
+ * until a reload.
  */
 export function startConnectivityMonitor(): () => void {
   const handleOnline = () => {
@@ -38,5 +44,12 @@ export function startConnectivityMonitor(): () => void {
     flushOutbox().catch(console.error)
   }
 
-  return () => window.removeEventListener('online', handleOnline)
+  const interval = setInterval(() => {
+    if (isOnline()) flushOutbox().catch(console.error)
+  }, PERIODIC_FLUSH_MS)
+
+  return () => {
+    window.removeEventListener('online', handleOnline)
+    clearInterval(interval)
+  }
 }

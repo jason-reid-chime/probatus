@@ -1,5 +1,6 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { Analytics } from '@vercel/analytics/react'
 import { AuthProvider } from './contexts/AuthContext'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -31,6 +32,8 @@ import WorkOrderDetail from './pages/work-orders/WorkOrderDetail'
 import BatchSession from './pages/calibrations/BatchSession'
 import ScheduleView from './pages/assets/ScheduleView'
 import Signup from './pages/Signup'
+import NotFound from './pages/NotFound'
+import { OUTBOX_FLUSHED_EVENT } from './lib/sync/outbox'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,11 +44,27 @@ const queryClient = new QueryClient({
   },
 })
 
+// Refetch server data after every outbox flush so lists and detail views show
+// what actually landed (and anything changed on other devices meanwhile).
+function RefreshOnSync() {
+  const qc = useQueryClient()
+  useEffect(() => {
+    const onFlushed = () => {
+      qc.invalidateQueries({ queryKey: ['calibrations'] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    }
+    window.addEventListener(OUTBOX_FLUSHED_EVENT, onFlushed)
+    return () => window.removeEventListener(OUTBOX_FLUSHED_EVENT, onFlushed)
+  }, [qc])
+  return null
+}
+
 export default function App() {
   return (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+        <RefreshOnSync />
         <BrowserRouter>
           <Analytics />
           <Routes>
@@ -84,6 +103,8 @@ export default function App() {
               <Route path="work-orders/:id/edit" element={<WorkOrderForm />} />
               <Route path="calibrations/batch" element={<BatchSession />} />
               <Route path="schedule" element={<ScheduleView />} />
+              <Route path="dashboard" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
           </BrowserRouter>

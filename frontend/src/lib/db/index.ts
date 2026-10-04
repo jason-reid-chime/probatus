@@ -70,6 +70,7 @@ export interface OutboxEntry {
   created_at: string
   retries: number
   last_error?: string
+  user_id?: string          // owner; entries only replay under this user's session
 }
 
 // -------------------------------------------------------

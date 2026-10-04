@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckCircle, XCircle, LayoutTemplate, X } from 'lucide-react'
 import { db } from '../../lib/db'
-import { isOnline } from '../../lib/sync/connectivity'
 import type { LocalAsset, LocalMeasurement } from '../../lib/db'
 import { useAuth } from '../../hooks/useAuth'
 import { useSaveCalibration } from '../../hooks/useCalibration'
@@ -588,7 +587,11 @@ export default function CalibrationForm() {
   }
 
   async function handleSave() {
-    if (!asset || !profile) return
+    if (!asset) return
+    if (!profile) {
+      setToast('Can’t save — your account has no company profile yet. Contact your administrator.')
+      return
+    }
     setSaving(true)
 
     try {
@@ -608,15 +611,18 @@ export default function CalibrationForm() {
         tech_signature: techSignature || undefined,
       }
 
-      await saveCalibration.mutateAsync({
+      const { synced } = await saveCalibration.mutateAsync({
         record: record as Parameters<typeof saveCalibration.mutateAsync>[0]['record'],
         measurements: liveMeasurements,
         standardIds: selectedStandardIds,
         isNewRecord: !existingRecordId,
       })
 
-      setToast(isOnline() ? 'Saved' : 'Saved offline — will sync when online')
+      setToast(synced ? 'Saved' : 'Saved on this device — will sync when the server is reachable')
       setTimeout(() => navigate(`/calibrations/${recordId}`), 1200)
+    } catch (err) {
+      console.error('[calibration] save failed', err)
+      setToast(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setSaving(false)
     }

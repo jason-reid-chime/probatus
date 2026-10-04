@@ -88,11 +88,17 @@ export function useAsset(id: string): UseQueryResult<LocalAsset | undefined> {
   })
 }
 
+/** True for failures where the request never got a server answer. */
+function isNetworkError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String((err as { message?: unknown })?.message ?? err)
+  return err instanceof TypeError || /sync-timeout|failed to fetch|network|load failed/i.test(msg)
+}
+
 // ---------------------------------------------------------------------------
 // useUpsertAsset — offline-first mutation using outbox pattern
-// Writes to Dexie immediately so the UI feels instant even offline,
-// then attempts an API sync with a 5-second timeout.  If the sync fails
-// (or the device is offline), the outbox entry is retried on reconnect.
+// Online, the asset is written to the server directly (5-second timeout) so
+// errors surface in the form. Offline or unreachable, it is written to Dexie
+// and queued in the outbox, which retries on reconnect.
 // ---------------------------------------------------------------------------
 export function useUpsertAsset() {
   const queryClient = useQueryClient()
@@ -106,41 +112,33 @@ export function useUpsertAsset() {
         updated_at: new Date().toISOString(),
       }
 
-      // 1. Write to Dexie immediately (offline-first)
-      await db.assets.put(saved)
+      // 1. Online: write straight to the server so validation errors (e.g. a
+      //    duplicate tag ID) reach the user instead of becoming a failed outbox
+      //    entry later. The 5-second timeout covers airplane mode, where
+      //    navigator.onLine can stay true.
+      if (isOnline()) {
+        try {
+          return await Promise.race([
+            apiUpsertAsset(asset),   // caches the server copy in Dexie
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('sync-timeout')), 5000),
+            ),
+          ])
+        } catch (err) {
+          if (!isNetworkError(err)) throw err
+          // Unreachable — fall through to the offline path
+        }
+      }
 
-      // 2. Enqueue in outbox for guaranteed sync
+      // 2. Offline (or server unreachable): write to Dexie and queue the change.
+      //    The PUT is a full replace, so replaying it after a timed-out request
+      //    that did land is harmless; a 404 is replayed as a create.
+      await db.assets.put(saved)
       await enqueue({
         method: 'PUT',
         url:    `/assets/${saved.id}`,
         body:   saved as unknown as Record<string, unknown>,
       })
-
-      // 3. Opportunistic online sync with 5-second timeout
-      //    (airplane mode can keep navigator.onLine true briefly)
-      if (isOnline()) {
-        try {
-          const withTimeout = <T>(p: Promise<T>): Promise<T> =>
-            Promise.race([
-              p,
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('sync-timeout')), 5000),
-              ),
-            ])
-          const synced = await withTimeout(apiUpsertAsset(asset))
-          // Remove the outbox entry — already synced
-          const entries = await db.outbox
-            .filter((e) => e.url === `/assets/${saved.id}`)
-            .toArray()
-          if (entries.length > 0) {
-            await db.outbox.delete(entries[entries.length - 1].id!)
-          }
-          return synced
-        } catch {
-          // Network error or timeout — outbox will retry when back online
-        }
-      }
-
       return saved
     },
 

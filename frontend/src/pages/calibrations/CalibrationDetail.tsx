@@ -335,8 +335,12 @@ export default function CalibrationDetail() {
       }
     }
     // If the backend status is out of sync with local, bring it up to date so
-    // submit-for-approval and approve calls find the right status.
-    if (backendStatus !== null && backendStatus !== record!.status) {
+    // submit-for-approval and approve calls find the right status. Only the
+    // technician-owned statuses can be set this way — approval and rejection go
+    // through their own endpoints. standard_ids is omitted so the server keeps
+    // the record's linked standards.
+    const alignable = record!.status === 'in_progress' || record!.status === 'pending_approval'
+    if (backendStatus !== null && backendStatus !== record!.status && alignable) {
       await apiRequest('PUT', `/calibrations/${record!.id}`, {
         status:         record!.status,
         tech_signature: record!.tech_signature ?? '',
@@ -344,7 +348,6 @@ export default function CalibrationDetail() {
         flag_number:    record!.flag_number     ?? '',
         notes:          record!.notes          ?? '',
         local_id:       record!.local_id       ?? '',
-        standard_ids:   [],
       })
     }
   }
@@ -367,11 +370,11 @@ export default function CalibrationDetail() {
         updated_at: new Date().toISOString(),
       }
 
-      // Write to Dexie
-      await db.calibration_records.put(updated)
-
-      // Update via backend API
+      // Update via backend API first — submitting is online-only, and writing
+      // Dexie only after success keeps the local copy from claiming a status
+      // the server never accepted.
       await apiRequest('PUT', `/calibrations/${updated.id}`, updated)
+      await db.calibration_records.put(updated)
 
       queryClient.setQueryData(calibrationKeys.detail(record.id), updated)
     } catch (err) {

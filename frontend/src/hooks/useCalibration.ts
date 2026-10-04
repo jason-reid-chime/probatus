@@ -9,11 +9,9 @@ import { isOnline } from '../lib/sync/connectivity'
 import type { LocalCalibrationRecord, LocalMeasurement } from '../lib/db'
 import {
   fetchCalibrationsByAsset,
-  upsertCalibrationRecord,
-  upsertMeasurements,
-  upsertCalibrationStandards,
+  buildCalibrationPayload,
 } from '../lib/api/calibrations'
-import { enqueue, enqueueStandardsReplace } from '../lib/sync/outbox'
+import { enqueue, flushOutbox, ownEntries } from '../lib/sync/outbox'
 
 function sortMeasurements(measurements: LocalMeasurement[]): LocalMeasurement[] {
   return [...measurements].sort((a, b) => {
@@ -60,6 +58,21 @@ export function useCalibrationsByAsset(
 }
 
 // ---------------------------------------------------------------------------
+// Read freshness
+// Local data wins only while the current user has unsynced changes for the
+// record. Otherwise the server copy is fetched and written back to Dexie, so
+// changes made elsewhere (e.g. a supervisor approving on another device) show
+// up instead of the first cached copy being served forever.
+// ---------------------------------------------------------------------------
+async function hasPendingChanges(recordId: string): Promise<boolean> {
+  const entries = await ownEntries()
+  return entries.some(
+    (e) => (e.body as Record<string, unknown> | undefined)?.id === recordId
+      || e.url.startsWith(`/calibrations/${recordId}`),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // useCalibrationRecord — single record by id
 // ---------------------------------------------------------------------------
 export function useCalibrationRecord(
@@ -68,23 +81,27 @@ export function useCalibrationRecord(
   return useQuery({
     queryKey: calibrationKeys.detail(recordId),
     queryFn: async () => {
-      // Try Dexie first
       const local = await db.calibration_records.get(recordId)
-      if (local) return local
+      if (local && await hasPendingChanges(recordId)) return local
 
-      // Fall back to Supabase
-      const { supabase } = await import('../lib/supabase')
-      const { data, error } = await supabase
-        .from('calibration_records')
-        .select('*')
-        .eq('id', recordId)
-        .maybeSingle()
-      if (error) throw error
-      if (data) {
-        await db.calibration_records.put(data as LocalCalibrationRecord)
-        return data as LocalCalibrationRecord
+      try {
+        const { supabase } = await import('../lib/supabase')
+        const { data, error } = await supabase
+          .from('calibration_records')
+          .select('*')
+          .eq('id', recordId)
+          .maybeSingle()
+        if (error) throw error
+        if (data) {
+          await db.calibration_records.put(data as LocalCalibrationRecord)
+          return data as LocalCalibrationRecord
+        }
+        return local
+      } catch (err) {
+        // Offline fallback
+        if (local) return local
+        throw err
       }
-      return undefined
     },
     enabled: !!recordId,
     staleTime: 1000 * 60 * 5,
@@ -100,24 +117,30 @@ export function useMeasurementsByRecord(
   return useQuery({
     queryKey: calibrationKeys.measurements(recordId),
     queryFn: async () => {
-      // Always try Dexie first (offline-first)
       const local = await db.measurements
         .where('record_id')
         .equals(recordId)
         .toArray()
-      if (local.length > 0) return sortMeasurements(local)
+      if (local.length > 0 && await hasPendingChanges(recordId)) return sortMeasurements(local)
 
-      // Attempt remote fetch
-      const { supabase } = await import('../lib/supabase')
-      const { data, error } = await supabase
-        .from('calibration_measurements')
-        .select('*')
-        .eq('record_id', recordId)
-        .order('standard_value', { ascending: true })
-      if (error) throw error
-      const measurements = (data ?? []) as LocalMeasurement[]
-      await db.measurements.bulkPut(measurements)
-      return sortMeasurements(measurements)
+      try {
+        const { supabase } = await import('../lib/supabase')
+        const { data, error } = await supabase
+          .from('calibration_measurements')
+          .select('*')
+          .eq('record_id', recordId)
+          .order('standard_value', { ascending: true })
+        if (error) throw error
+        const measurements = (data ?? []) as LocalMeasurement[]
+        if (measurements.length === 0 && local.length > 0) return sortMeasurements(local)
+        await db.measurements.where('record_id').equals(recordId).delete()
+        await db.measurements.bulkPut(measurements)
+        return sortMeasurements(measurements)
+      } catch (err) {
+        // Offline fallback
+        if (local.length > 0) return sortMeasurements(local)
+        throw err
+      }
     },
     enabled: !!recordId,
     staleTime: 1000 * 60 * 5,
@@ -126,8 +149,9 @@ export function useMeasurementsByRecord(
 
 // ---------------------------------------------------------------------------
 // useSaveCalibration
-// Writes record + measurements to Dexie immediately, then enqueues both
-// in the outbox for sync.
+// Writes record + measurements to Dexie immediately, then enqueues one outbox
+// entry and (when online) flushes it. The outbox is the only write path, so a
+// save is never sent twice by racing a direct API call against a flush.
 // ---------------------------------------------------------------------------
 export interface SaveCalibrationInput {
   record: LocalCalibrationRecord
@@ -136,6 +160,14 @@ export interface SaveCalibrationInput {
   /** True when this is the first save (record doesn't exist in the backend yet). */
   isNewRecord?: boolean
 }
+
+export interface SaveCalibrationResult {
+  record: LocalCalibrationRecord
+  /** True when the change reached the server; false when it is queued for later. */
+  synced: boolean
+}
+
+const SYNC_TIMEOUT_MS = 5000
 
 export function useSaveCalibration() {
   const queryClient = useQueryClient()
@@ -146,73 +178,49 @@ export function useSaveCalibration() {
       measurements,
       standardIds = [],
       isNewRecord = false,
-    }: SaveCalibrationInput): Promise<LocalCalibrationRecord> => {
-      // 1. Write to Dexie immediately (offline-first)
+    }: SaveCalibrationInput): Promise<SaveCalibrationResult> => {
+      // 1. Write to Dexie immediately (offline-first). The form regenerates
+      //    measurement ids on every edit, so replace the record's measurements
+      //    rather than adding to them.
       await db.calibration_records.put(record)
+      await db.measurements.where('record_id').equals(record.id).delete()
       if (measurements.length > 0) {
         await db.measurements.bulkPut(measurements)
       }
 
-      // 2. Enqueue in outbox.
-      // New records use POST and include the client UUID so the backend creates the
-      // record with the same ID as Dexie — keeping both sides in sync without
-      // needing a UUID translation layer.
-      // Existing records use PUT (the ID is already known on both sides).
-      await enqueue({
+      // 2. Enqueue in outbox. New records POST with the client UUID so the
+      //    backend creates the record with the same ID as Dexie; existing records
+      //    PUT. Both carry the full payload, and the server replaces measurements
+      //    and standards, so replays are idempotent.
+      const entryId = await enqueue({
         method: isNewRecord ? 'POST' : 'PUT',
         url:    isNewRecord ? '/calibrations' : `/calibrations/${record.id}`,
-        body:   {
-          ...(record as unknown as Record<string, unknown>),
-          id:           record.id,       // client UUID, accepted by backend for new records
-          standard_ids: standardIds,
-          measurements: measurements as unknown as Record<string, unknown>[],
-        },
+        body:   buildCalibrationPayload(record, measurements, standardIds),
       })
 
-      // 3. Standards are included in the calibration body above — no separate enqueue needed.
-      //    enqueueStandardsReplace is kept for backwards compatibility (no-op).
-      await enqueueStandardsReplace(record.id, standardIds)
-
-      // 4. Attempt online sync opportunistically — skip entirely if offline.
-      //    5-second timeout guards against airplane-mode where onLine stays true.
+      // 3. Flush now when online. The timeout guards against airplane mode,
+      //    where onLine stays true; the entry stays queued and the periodic
+      //    flush picks it up.
       if (isOnline()) {
-        try {
-          const withTimeout = <T>(p: Promise<T>): Promise<T> =>
-            Promise.race([
-              p,
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('sync-timeout')), 5000),
-              ),
-            ])
-
-          const saved = await withTimeout(upsertCalibrationRecord(record, { standardIds, measurements, isExisting: !isNewRecord }))
-          await withTimeout(upsertMeasurements(measurements))
-          await withTimeout(upsertCalibrationStandards(record.id, standardIds))
-
-          // Clean up outbox entries now that sync succeeded — prevents double-flush.
-          // New records are enqueued at /calibrations (POST); existing at /calibrations/{id} (PUT).
-          const calibrationUrl = isNewRecord ? '/calibrations' : `/calibrations/${record.id}`
-          const outboxEntries = await db.outbox
-            .filter((e) => e.url === calibrationUrl && (e.body as Record<string,unknown>)?.id === record.id)
-            .toArray()
-          if (outboxEntries.length > 0) {
-            await db.outbox.bulkDelete(outboxEntries.map((e) => e.id!))
-          }
-
-          return saved
-        } catch {
-          // Network error or timeout — outbox will retry when back online
-        }
+        await Promise.race([
+          flushOutbox().catch(console.error),
+          new Promise((resolve) => setTimeout(resolve, SYNC_TIMEOUT_MS)),
+        ])
+        const stillQueued = await db.outbox.get(entryId)
+        return { record, synced: !stillQueued }
       }
-      return record
+      return { record, synced: false }
     },
 
-    onSuccess: (saved) => {
+    onSuccess: ({ record }) => {
       // Invalidate related queries so lists + detail views refresh
       queryClient.invalidateQueries({
-        queryKey: calibrationKeys.byAsset(saved.asset_id),
+        queryKey: calibrationKeys.byAsset(record.asset_id),
       })
-      queryClient.setQueryData(calibrationKeys.detail(saved.id), saved)
+      queryClient.setQueryData(calibrationKeys.detail(record.id), record)
+      queryClient.invalidateQueries({
+        queryKey: calibrationKeys.measurements(record.id),
+      })
     },
   })
 }

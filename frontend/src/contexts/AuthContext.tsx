@@ -8,7 +8,8 @@ import {
 import type { ReactNode } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import { flushOutbox } from '../lib/sync/outbox'
+import { useQueryClient } from '@tanstack/react-query'
+import { flushOutbox, clearLocalDataOnSignOut } from '../lib/sync/outbox'
 import type { Profile } from '../types'
 
 interface AuthContextValue {
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
 
   const loadProfile = useCallback(async (userId: string) => {
     const p = await fetchProfile(userId)
@@ -92,10 +94,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   const signOut = useCallback(async () => {
+    // Last chance to push this user's queued changes under their own session.
+    // Whatever doesn't make it stays owner-stamped in the outbox and resumes
+    // the next time this user signs in on this device.
+    await Promise.race([
+      flushOutbox().catch(console.error),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ])
     const { error } = await supabase.auth.signOut()
     if (error) throw error
     setProfile(null)
-  }, [])
+    // Drop cached data so the next account on this device starts clean.
+    queryClient.clear()
+    await clearLocalDataOnSignOut().catch(console.error)
+  }, [queryClient])
 
   const refreshProfile = useCallback(async () => {
     if (user) await loadProfile(user.id)

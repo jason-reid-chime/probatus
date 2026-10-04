@@ -160,6 +160,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 
 	var body struct {
+		ID                      string   `json:"id"` // optional client UUID (offline-created asset)
 		CustomerID              *string  `json:"customer_id"`
 		TagID                   string   `json:"tag_id"`
 		SerialNumber            string   `json:"serial_number"`
@@ -178,19 +179,36 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An asset created offline arrives with its client UUID (the outbox replays a
+	// PUT that 404'd as this POST). A replay of the same create updates the row
+	// in place; an id owned by another tenant is never touched.
 	row := h.pool.QueryRow(r.Context(),
 		`INSERT INTO assets
-			(tenant_id, customer_id, tag_id, serial_number, manufacturer, model,
+			(id, tenant_id, customer_id, tag_id, serial_number, manufacturer, model,
 			 instrument_type, range_min, range_max, range_unit,
 			 calibration_interval_days, location, notes)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		 VALUES (COALESCE(NULLIF($14,'')::uuid, gen_random_uuid()),
+			 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		 ON CONFLICT (id) DO UPDATE SET
+			customer_id = EXCLUDED.customer_id, tag_id = EXCLUDED.tag_id,
+			serial_number = EXCLUDED.serial_number, manufacturer = EXCLUDED.manufacturer,
+			model = EXCLUDED.model, instrument_type = EXCLUDED.instrument_type,
+			range_min = EXCLUDED.range_min, range_max = EXCLUDED.range_max,
+			range_unit = EXCLUDED.range_unit,
+			calibration_interval_days = EXCLUDED.calibration_interval_days,
+			location = EXCLUDED.location, notes = EXCLUDED.notes
+		 WHERE assets.tenant_id = EXCLUDED.tenant_id
 		 RETURNING`+selectCols,
 		tenantID, body.CustomerID, body.TagID, body.SerialNumber, body.Manufacturer,
 		body.Model, body.InstrumentType, body.RangeMin, body.RangeMax, body.RangeUnit,
-		body.CalibrationIntervalDays, body.Location, body.Notes,
+		body.CalibrationIntervalDays, body.Location, body.Notes, body.ID,
 	)
 
 	a, err := scanAsset(row)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusConflict, "asset id already in use")
+		return
+	}
 	if isUniqueViolation(err) {
 		writeError(w, http.StatusConflict, "tag ID already exists for this tenant")
 		return

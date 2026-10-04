@@ -25,27 +25,25 @@ vi.mock('../lib/db', () => ({
       where: vi.fn().mockReturnValue({
         equals: vi.fn().mockReturnValue({
           toArray: vi.fn().mockResolvedValue([]),
+          delete: vi.fn().mockResolvedValue(0),
         }),
       }),
     },
     outbox: {
-      add: vi.fn().mockResolvedValue(undefined),
-      filter: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
-      bulkDelete: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(undefined),
     },
   },
 }))
 
-vi.mock('../lib/api/calibrations', () => ({
+vi.mock('../lib/api/calibrations', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api/calibrations')>()),
   fetchCalibrationsByAsset: vi.fn(),
-  upsertCalibrationRecord: vi.fn(),
-  upsertMeasurements: vi.fn(),
-  upsertCalibrationStandards: vi.fn(),
 }))
 
 vi.mock('../lib/sync/outbox', () => ({
-  enqueue: vi.fn().mockResolvedValue(undefined),
-  enqueueStandardsReplace: vi.fn().mockResolvedValue(undefined),
+  enqueue: vi.fn().mockResolvedValue(42),
+  flushOutbox: vi.fn().mockResolvedValue(undefined),
+  ownEntries: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../lib/sync/connectivity', () => ({
@@ -70,10 +68,11 @@ import {
   useSaveCalibration,
   calibrationKeys,
 } from './useCalibration'
-import { fetchCalibrationsByAsset, upsertCalibrationRecord, upsertMeasurements, upsertCalibrationStandards } from '../lib/api/calibrations'
-import { enqueue, enqueueStandardsReplace } from '../lib/sync/outbox'
+import { fetchCalibrationsByAsset } from '../lib/api/calibrations'
+import { enqueue, flushOutbox, ownEntries } from '../lib/sync/outbox'
 import { isOnline } from '../lib/sync/connectivity'
 import { db } from '../lib/db'
+import { supabase } from '../lib/supabase'
 import type { LocalCalibrationRecord, LocalMeasurement } from '../lib/db'
 
 // ---------------------------------------------------------------------------
@@ -199,6 +198,43 @@ describe('useCalibrationRecord', () => {
   })
 })
 
+describe('useCalibrationRecord freshness', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  function mockRemote(data: unknown) {
+    vi.mocked(supabase.from).mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data, error: null }),
+    } as never)
+  }
+
+  it('prefers the server copy when there are no unsynced local changes', async () => {
+    vi.mocked(db.calibration_records.get).mockResolvedValueOnce(makeRecord({ status: 'pending_approval' }))
+    vi.mocked(ownEntries).mockResolvedValueOnce([])
+    const remote = makeRecord({ status: 'approved' })
+    mockRemote(remote)
+
+    const { result } = renderHook(() => useCalibrationRecord('rec-1'), { wrapper: makeWrapper() })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data?.status).toBe('approved')
+    expect(db.calibration_records.put).toHaveBeenCalledWith(remote)
+  })
+
+  it('keeps the local copy while it has unsynced changes', async () => {
+    const local = makeRecord({ notes: 'edited offline' })
+    vi.mocked(db.calibration_records.get).mockResolvedValueOnce(local)
+    vi.mocked(ownEntries).mockResolvedValueOnce([
+      { method: 'PUT', url: '/calibrations/rec-1', body: { id: 'rec-1' }, created_at: '', retries: 0, user_id: 'u' },
+    ])
+
+    const { result } = renderHook(() => useCalibrationRecord('rec-1'), { wrapper: makeWrapper() })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data).toEqual(local)
+    expect(supabase.from).not.toHaveBeenCalled()
+  })
+})
+
 // ---------------------------------------------------------------------------
 // useMeasurementsByRecord
 // ---------------------------------------------------------------------------
@@ -249,9 +285,21 @@ describe('useMeasurementsByRecord', () => {
 // useSaveCalibration
 // ---------------------------------------------------------------------------
 describe('useSaveCalibration', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(enqueue).mockResolvedValue(42)
+    vi.mocked(flushOutbox).mockResolvedValue(undefined)
+    vi.mocked(db.outbox.get).mockResolvedValue(undefined)
+    // Earlier suites replace this chain without delete()
+    vi.mocked(db.measurements.where).mockReturnValue({
+      equals: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockResolvedValue([]),
+        delete: vi.fn().mockResolvedValue(0),
+      }),
+    } as unknown as ReturnType<typeof db.measurements.where>)
+  })
 
-  it('writes record and measurements to Dexie', async () => {
+  it('writes record and measurements to Dexie, replacing old measurements', async () => {
     vi.mocked(isOnline).mockReturnValue(false)
     const record = makeRecord()
     const measurements = [makeMeasurement()]
@@ -261,80 +309,88 @@ describe('useSaveCalibration', () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
     expect(vi.mocked(db.calibration_records.put)).toHaveBeenCalledWith(record)
+    expect(vi.mocked(db.measurements.where)).toHaveBeenCalledWith('record_id')
     expect(vi.mocked(db.measurements.bulkPut)).toHaveBeenCalledWith(measurements)
   })
 
-  it('enqueues record and measurements in the outbox as a single calibration entry', async () => {
+  it('enqueues one entry carrying measurements and standards', async () => {
     vi.mocked(isOnline).mockReturnValue(false)
     const record = makeRecord()
-    const measurements = [makeMeasurement({ id: 'm-1' }), makeMeasurement({ id: 'm-2' })]
+    const measurements = [makeMeasurement({ id: 'm-1' }), makeMeasurement({ id: 'm-2', as_found_value: 49.5 })]
 
     const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
-    result.current.mutate({ record, measurements })
+    result.current.mutate({ record, measurements, standardIds: ['std-1'] })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-
-    const calls = vi.mocked(enqueue).mock.calls
-    // The new outbox schema uses method/url/body — one entry for the calibration record
-    const urls = calls.map((c) => c[0].url)
-    expect(urls.some((u) => u.includes('/calibrations'))).toBe(true)
+    expect(enqueue).toHaveBeenCalledTimes(1)
+    const entry = vi.mocked(enqueue).mock.calls[0][0]
+    expect(entry.method).toBe('PUT')
+    expect(entry.url).toBe('/calibrations/rec-1')
+    expect(entry.body?.standard_ids).toEqual(['std-1'])
+    expect(entry.body?.measurements).toHaveLength(2)
+    expect((entry.body?.measurements as Record<string, unknown>[])[1].as_found_value).toBe(49.5)
   })
 
-  it('enqueues standards as a replace operation when standardIds provided', async () => {
+  it('new records POST to the collection with the client id', async () => {
     vi.mocked(isOnline).mockReturnValue(false)
-    const record = makeRecord()
-
     const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
-    result.current.mutate({ record, measurements: [], standardIds: ['std-1', 'std-2'] })
+    result.current.mutate({ record: makeRecord(), measurements: [], isNewRecord: true })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-
-    expect(vi.mocked(enqueueStandardsReplace)).toHaveBeenCalledWith(record.id, ['std-1', 'std-2'])
+    const entry = vi.mocked(enqueue).mock.calls[0][0]
+    expect(entry.method).toBe('POST')
+    expect(entry.url).toBe('/calibrations')
+    expect(entry.body?.id).toBe('rec-1')
   })
 
-  it('skips online sync when offline', async () => {
+  it('does not flush when offline and reports unsynced', async () => {
     vi.mocked(isOnline).mockReturnValue(false)
-    const record = makeRecord()
-
     const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
-    result.current.mutate({ record, measurements: [] })
+    result.current.mutate({ record: makeRecord(), measurements: [] })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(upsertCalibrationRecord).not.toHaveBeenCalled()
-    expect(upsertMeasurements).not.toHaveBeenCalled()
+    expect(flushOutbox).not.toHaveBeenCalled()
+    expect(result.current.data?.synced).toBe(false)
   })
 
-  it('attempts online sync when online and returns remote record', async () => {
+  it('flushes when online and reports synced once the entry is gone', async () => {
     vi.mocked(isOnline).mockReturnValue(true)
+    vi.mocked(db.outbox.get).mockResolvedValue(undefined)
     const record = makeRecord()
-    const saved = { ...record, id: 'saved-id' } as LocalCalibrationRecord
-    vi.mocked(upsertCalibrationRecord).mockResolvedValueOnce(saved)
-    vi.mocked(upsertMeasurements).mockResolvedValueOnce(undefined as unknown as void)
-    vi.mocked(upsertCalibrationStandards).mockResolvedValueOnce(undefined)
 
     const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
     result.current.mutate({ record, measurements: [] })
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(result.current.data).toEqual(saved)
+    expect(flushOutbox).toHaveBeenCalledTimes(1)
+    expect(db.outbox.get).toHaveBeenCalledWith(42)
+    expect(result.current.data).toEqual({ record, synced: true })
   })
 
-  it('falls back to local record when online sync times out', async () => {
+  it('reports unsynced when the entry is still queued after the flush', async () => {
+    vi.mocked(isOnline).mockReturnValue(true)
+    vi.mocked(db.outbox.get).mockResolvedValue({ id: 42 } as never)
+
+    const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
+    result.current.mutate({ record: makeRecord(), measurements: [] })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(result.current.data?.synced).toBe(false)
+  })
+
+  it('stops waiting after the sync timeout and keeps the change queued', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.mocked(isOnline).mockReturnValue(true)
-    vi.mocked(upsertCalibrationRecord).mockImplementationOnce(
-      () => new Promise(() => { /* never resolves — tests the sync timeout */ }),
-    )
-    const record = makeRecord()
+    vi.mocked(flushOutbox).mockImplementationOnce(() => new Promise(() => { /* hangs */ }))
+    vi.mocked(db.outbox.get).mockResolvedValue({ id: 42 } as never)
 
     const { result } = renderHook(() => useSaveCalibration(), { wrapper: makeWrapper() })
-    result.current.mutate({ record, measurements: [] })
+    result.current.mutate({ record: makeRecord(), measurements: [] })
 
-    // Advance past the 5-second sync timeout
     await vi.advanceTimersByTimeAsync(6000)
     vi.useRealTimers()
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(result.current.data).toEqual(record)
+    expect(result.current.data?.synced).toBe(false)
   })
 })

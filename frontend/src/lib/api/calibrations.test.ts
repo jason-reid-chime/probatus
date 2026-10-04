@@ -10,11 +10,16 @@ vi.mock('../db/index', () => ({
     calibration_records: {
       bulkPut: vi.fn(),
       put:     vi.fn(),
+      where:   vi.fn(),
     },
     measurements: {
       bulkPut: vi.fn(),
     },
   },
+}))
+
+vi.mock('../sync/outbox', () => ({
+  pendingRecordIds: vi.fn().mockResolvedValue(new Set()),
 }))
 
 vi.mock('../supabase/index', () => ({
@@ -25,9 +30,10 @@ vi.mock('../supabase/index', () => ({
 
 import { db } from '../db/index'
 import { supabase } from '../supabase/index'
+import { pendingRecordIds } from '../sync/outbox'
 import {
   fetchCalibrationsByAsset,
-  upsertCalibrationStandards,
+  buildCalibrationPayload,
 } from './calibrations'
 
 // ---------------------------------------------------------------------------
@@ -137,72 +143,66 @@ describe('fetchCalibrationsByAsset', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// upsertCalibrationStandards
-// ---------------------------------------------------------------------------
-
-describe('upsertCalibrationStandards', () => {
-  beforeEach(() => {
+describe('fetchCalibrationsByAsset with unsynced local edits', () => {
+  it('keeps the local version of records that have pending outbox entries', async () => {
     vi.clearAllMocks()
+    const serverOld = makeRecord({ id: 'rec-1', notes: 'server' })
+    const serverOther = makeRecord({ id: 'rec-2', performed_at: '2025-12-01T00:00:00.000Z' })
+    const localEdited = makeRecord({ id: 'rec-1', notes: 'edited offline' })
+    const localOnly = makeRecord({ id: 'rec-3', performed_at: '2026-02-01T00:00:00.000Z' })
+
+    vi.mocked(supabase.from).mockReturnValue(makeChain({ data: [serverOld, serverOther] }) as never)
+    vi.mocked(pendingRecordIds).mockResolvedValueOnce(new Set(['rec-1', 'rec-3']))
+    vi.mocked(db.calibration_records.where).mockReturnValue({
+      equals: vi.fn().mockReturnValue({
+        filter: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([localEdited, localOnly]) }),
+      }),
+    } as never)
+
+    const result = await fetchCalibrationsByAsset('asset-1')
+
+    // The server copy of rec-1 must not overwrite the unsynced local edit
+    expect(db.calibration_records.bulkPut).toHaveBeenCalledWith([serverOther])
+    expect(result.map((r) => r.id)).toEqual(['rec-3', 'rec-1', 'rec-2'])
+    expect(result.find((r) => r.id === 'rec-1')?.notes).toBe('edited offline')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildCalibrationPayload
+// ---------------------------------------------------------------------------
+
+describe('buildCalibrationPayload', () => {
+  it('includes the client id and asset_id so a PUT can be replayed as a POST', () => {
+    const body = buildCalibrationPayload(makeRecord(), [], [])
+    expect(body.id).toBe('rec-1')
+    expect(body.asset_id).toBe('asset-1')
+    expect(body.status).toBe('in_progress')
   })
 
-  it('deletes existing links for the record before inserting new ones', async () => {
-    const deleteEqChain = { eq: vi.fn().mockResolvedValue({ error: null }) }
-    const deleteChain   = { delete: vi.fn().mockReturnValue(deleteEqChain) }
-    const insertChain   = makeChain({ error: null })
-
-    vi.mocked(supabase.from)
-      .mockReturnValueOnce(deleteChain as never)   // delete call
-      .mockReturnValueOnce(insertChain as never)   // insert call
-
-    await upsertCalibrationStandards('rec-1', ['std-a', 'std-b'])
-
-    expect(supabase.from).toHaveBeenNthCalledWith(1, 'calibration_standards_used')
-    expect(deleteChain.delete).toHaveBeenCalled()
-    expect(deleteEqChain.eq).toHaveBeenCalledWith('record_id', 'rec-1')
+  it('passes standard ids through', () => {
+    const body = buildCalibrationPayload(makeRecord(), [], ['std-a', 'std-b'])
+    expect(body.standard_ids).toEqual(['std-a', 'std-b'])
   })
 
-  it('inserts correct rows when standardIds is non-empty', async () => {
-    const deleteEqChain = { eq: vi.fn().mockResolvedValue({ error: null }) }
-    const deleteChain   = { delete: vi.fn().mockReturnValue(deleteEqChain) }
-    const insertChain   = makeChain({ error: null })
-
-    vi.mocked(supabase.from)
-      .mockReturnValueOnce(deleteChain as never)
-      .mockReturnValueOnce(insertChain as never)
-
-    await upsertCalibrationStandards('rec-1', ['std-a', 'std-b'])
-
-    expect(supabase.from).toHaveBeenNthCalledWith(2, 'calibration_standards_used')
-    expect(insertChain.insert).toHaveBeenCalledWith([
-      { record_id: 'rec-1', standard_id: 'std-a' },
-      { record_id: 'rec-1', standard_id: 'std-b' },
-    ])
-  })
-
-  it('skips the insert step when standardIds is empty', async () => {
-    const deleteEqChain = { eq: vi.fn().mockResolvedValue({ error: null }) }
-    const deleteChain   = { delete: vi.fn().mockReturnValue(deleteEqChain) }
-
-    vi.mocked(supabase.from).mockReturnValueOnce(deleteChain as never)
-
-    await upsertCalibrationStandards('rec-empty', [])
-
-    // Only one call to supabase.from (for delete), none for insert
-    expect(supabase.from).toHaveBeenCalledTimes(1)
-  })
-
-  it('throws when the insert returns an error', async () => {
-    const deleteEqChain = { eq: vi.fn().mockResolvedValue({ error: null }) }
-    const deleteChain   = { delete: vi.fn().mockReturnValue(deleteEqChain) }
-    const insertChain   = makeChain({ error: { message: 'insert failed' } })
-
-    vi.mocked(supabase.from)
-      .mockReturnValueOnce(deleteChain as never)
-      .mockReturnValueOnce(insertChain as never)
-
-    await expect(upsertCalibrationStandards('rec-1', ['std-x'])).rejects.toEqual(
-      expect.objectContaining({ message: 'insert failed' }),
-    )
+  it('keeps as-found, uncertainty and null values instead of collapsing to 0', () => {
+    const body = buildCalibrationPayload(makeRecord(), [{
+      id: 'm-1',
+      record_id: 'rec-1',
+      point_label: '50%',
+      standard_value: 50,
+      as_found_value: 49.2,
+      measured_value: undefined,
+      uncertainty_pct: 0.1,
+      confidence_level: '95',
+    }], [])
+    expect(body.measurements).toEqual([expect.objectContaining({
+      standard_value: 50,
+      as_found_value: 49.2,
+      measured_value: null,
+      pass: null,
+      uncertainty_pct: 0.1,
+      confidence_level: '95',
+    })])
   })
 })

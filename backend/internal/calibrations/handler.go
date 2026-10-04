@@ -249,24 +249,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.UserIDFromCtx(r.Context())
 
 	var body struct {
-		ID           string `json:"id"`             // optional client-generated UUID for offline-first sync
-		AssetID      string `json:"asset_id"`
-		PerformedAt  string `json:"performed_at"`
-		SalesNumber  string `json:"sales_number"`
-		FlagNumber   string `json:"flag_number"`
-		TechSignature string `json:"tech_signature"`
-		Notes        string `json:"notes"`
-		LocalID      string `json:"local_id"`
-		StandardIDs  []string `json:"standard_ids"`
-		Measurements []struct {
-			PointLabel    string  `json:"point_label"`
-			StandardValue float64 `json:"standard_value"`
-			MeasuredValue float64 `json:"measured_value"`
-			Unit          string  `json:"unit"`
-			Pass          bool    `json:"pass"`
-			ErrorPct      float64 `json:"error_pct"`
-			Notes         string  `json:"notes"`
-		} `json:"measurements"`
+		ID            string             `json:"id"` // optional client-generated UUID for offline-first sync
+		AssetID       string             `json:"asset_id"`
+		PerformedAt   string             `json:"performed_at"`
+		SalesNumber   string             `json:"sales_number"`
+		FlagNumber    string             `json:"flag_number"`
+		TechSignature string             `json:"tech_signature"`
+		Notes         string             `json:"notes"`
+		LocalID       string             `json:"local_id"`
+		StandardIDs   []string           `json:"standard_ids"`
+		Measurements  []measurementInput `json:"measurements"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -305,8 +297,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 
 	// If the client provided a UUID (offline-first), use it so the local Dexie
-	// record and the server record share the same ID. ON CONFLICT DO NOTHING makes
-	// this idempotent — safe to retry from the outbox.
+	// record and the server record share the same ID. The outbox may replay the
+	// same create more than once (lost response, retry after timeout), so a
+	// conflict on an existing record of this tenant updates it in place — but
+	// only while it is still editable. Rows of other tenants are never touched.
 	var recID string
 	if body.ID != "" {
 		err = tx.QueryRow(r.Context(),
@@ -314,11 +308,36 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 				(id, tenant_id, asset_id, technician_id, status, performed_at,
 				 sales_number, flag_number, tech_signature, notes, local_id)
 			 VALUES ($1::uuid,$2,$3,$4,'in_progress',$5,$6,$7,$8,$9,$10)
-			 ON CONFLICT (id) DO UPDATE SET updated_at = NOW()
+			 ON CONFLICT (id) DO UPDATE SET
+				sales_number   = EXCLUDED.sales_number,
+				flag_number    = EXCLUDED.flag_number,
+				tech_signature = EXCLUDED.tech_signature,
+				notes          = EXCLUDED.notes,
+				local_id       = EXCLUDED.local_id,
+				updated_at     = NOW()
+			 WHERE calibration_records.tenant_id = EXCLUDED.tenant_id
+			   AND calibration_records.status IN `+editableStatusesSQL+`
 			 RETURNING id::text`,
 			body.ID, tenantID, body.AssetID, userID, performedAt,
 			body.SalesNumber, body.FlagNumber, body.TechSignature, body.Notes, body.LocalID,
 		).Scan(&recID)
+		if err == pgx.ErrNoRows {
+			// The id exists but the conflict update was refused: either the record
+			// belongs to another tenant, or it has moved past editing (submitted or
+			// approved). A late replay of an old create is a no-op in the second case.
+			var status string
+			lookupErr := tx.QueryRow(r.Context(),
+				`SELECT status::text FROM calibration_records WHERE id = $1 AND tenant_id = $2`,
+				body.ID, tenantID,
+			).Scan(&status)
+			if lookupErr != nil {
+				writeError(w, http.StatusConflict, "calibration id already in use")
+				return
+			}
+			slog.Info("calibrations.Create: replay ignored, record locked", "record_id", body.ID, "status", status)
+			writeJSON(w, http.StatusOK, map[string]string{"id": body.ID})
+			return
+		}
 	} else {
 		err = tx.QueryRow(r.Context(),
 			`INSERT INTO calibration_records
@@ -336,32 +355,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert measurements.
-	for _, m := range body.Measurements {
-		_, err := tx.Exec(r.Context(),
-			`INSERT INTO calibration_measurements
-				(record_id, point_label, standard_value, measured_value, unit, pass, error_pct, notes)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			recID, m.PointLabel, m.StandardValue, m.MeasuredValue, m.Unit, m.Pass, m.ErrorPct, m.Notes,
-		)
-		if err != nil {
-			slog.Error("calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to insert measurement")
-			return
-		}
+	// Replace (not append) children so a replayed create never duplicates them.
+	if err := replaceMeasurements(r.Context(), tx, recID, body.Measurements); err != nil {
+		slog.Error("calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to insert measurement")
+		return
 	}
-
-	// Link standards used.
-	for _, stdID := range body.StandardIDs {
-		_, err := tx.Exec(r.Context(),
-			`INSERT INTO calibration_standards_used (record_id, standard_id) VALUES ($1,$2)`,
-			recID, stdID,
-		)
-		if err != nil {
-			slog.Error("calibrations.Create: standard link failed", "record_id", recID, "standard_id", stdID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to link standard")
-			return
-		}
+	if err := replaceStandards(r.Context(), tx, recID, body.StandardIDs); err != nil {
+		slog.Error("calibrations.Create: standard link failed", "record_id", recID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to link standard")
+		return
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
@@ -378,22 +381,96 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"id": recID})
 }
 
+// editableStatusesSQL lists the statuses in which a technician may still change
+// a record through Create/Update. Once submitted or approved, a record only
+// changes through Approve/Reject/Reopen, so a stale offline save can never
+// overwrite (or un-approve) it.
+const editableStatusesSQL = `('in_progress','rejected')`
+
+// measurementInput is one calibration point as sent by the client. Pointer
+// fields keep "not recorded" distinct from 0.
+type measurementInput struct {
+	PointLabel      string   `json:"point_label"`
+	StandardValue   *float64 `json:"standard_value"`
+	AsFoundValue    *float64 `json:"as_found_value"`
+	MeasuredValue   *float64 `json:"measured_value"`
+	Unit            string   `json:"unit"`
+	Pass            *bool    `json:"pass"`
+	ErrorPct        *float64 `json:"error_pct"`
+	Notes           string   `json:"notes"`
+	UncertaintyPct  *float64 `json:"uncertainty_pct"`
+	ConfidenceLevel *string  `json:"confidence_level"`
+}
+
+// replaceMeasurements swaps a record's measurements for ms.
+func replaceMeasurements(ctx context.Context, tx pgx.Tx, recID string, ms []measurementInput) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM calibration_measurements WHERE record_id = $1`, recID); err != nil {
+		return err
+	}
+	for _, m := range ms {
+		confidence := m.ConfidenceLevel
+		if confidence != nil && *confidence == "" {
+			confidence = nil // column has a CHECK ('95','99'); empty means unset
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO calibration_measurements
+				(record_id, point_label, standard_value, as_found_value, measured_value,
+				 unit, pass, error_pct, notes, uncertainty_pct, confidence_level)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			recID, m.PointLabel, m.StandardValue, m.AsFoundValue, m.MeasuredValue,
+			m.Unit, m.Pass, m.ErrorPct, m.Notes, m.UncertaintyPct, confidence,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replaceStandards swaps a record's linked standards for standardIDs.
+func replaceStandards(ctx context.Context, tx pgx.Tx, recID string, standardIDs []string) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM calibration_standards_used WHERE record_id = $1`, recID); err != nil {
+		return err
+	}
+	for _, stdID := range standardIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO calibration_standards_used (record_id, standard_id) VALUES ($1,$2)`,
+			recID, stdID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Update modifies an existing calibration record (status, signatures, etc.).
+//
+// standard_ids and measurements are optional: when a field is omitted (or null)
+// the record keeps its current standards/measurements; when present — even as
+// an empty list — they replace the stored ones.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
 
 	var body struct {
-		Status        string   `json:"status"`
-		TechSignature string   `json:"tech_signature"`
-		SalesNumber   string   `json:"sales_number"`
-		FlagNumber    string   `json:"flag_number"`
-		Notes         string   `json:"notes"`
-		LocalID       string   `json:"local_id"`
-		StandardIDs   []string `json:"standard_ids"`
+		Status        string             `json:"status"`
+		TechSignature string             `json:"tech_signature"`
+		SalesNumber   string             `json:"sales_number"`
+		FlagNumber    string             `json:"flag_number"`
+		Notes         string             `json:"notes"`
+		LocalID       string             `json:"local_id"`
+		StandardIDs   []string           `json:"standard_ids"`
+		Measurements  []measurementInput `json:"measurements"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Approval and rejection go through their own role-checked endpoints.
+	switch body.Status {
+	case "", "in_progress", "pending_approval":
+	default:
+		writeError(w, http.StatusBadRequest, "status must be in_progress or pending_approval; use the approve/reject endpoints")
 		return
 	}
 
@@ -413,13 +490,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 	tag, err := tx.Exec(r.Context(),
 		`UPDATE calibration_records
-		 SET status = COALESCE(NULLIF($3,''), status),
+		 SET status = CASE WHEN $3::text = '' THEN status ELSE $3::calibration_status END,
 		     tech_signature = COALESCE(NULLIF($4,''), tech_signature),
 		     sales_number = COALESCE(NULLIF($5,''), sales_number),
 		     flag_number = COALESCE(NULLIF($6,''), flag_number),
 		     notes = COALESCE(NULLIF($7,''), notes),
-		     local_id = COALESCE(NULLIF($8,''), local_id)
-		 WHERE id = $1 AND tenant_id = $2`,
+		     local_id = COALESCE(NULLIF($8,''), local_id),
+		     updated_at = NOW()
+		 WHERE id = $1 AND tenant_id = $2 AND status IN `+editableStatusesSQL,
 		id, tenantID, body.Status, body.TechSignature,
 		body.SalesNumber, body.FlagNumber, body.Notes, body.LocalID,
 	)
@@ -429,25 +507,31 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "calibration not found")
+		// Distinguish "no such record" (the outbox retries this as a create)
+		// from "record exists but is locked".
+		var status string
+		if err := tx.QueryRow(r.Context(),
+			`SELECT status::text FROM calibration_records WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID,
+		).Scan(&status); err != nil {
+			writeError(w, http.StatusNotFound, "calibration not found")
+			return
+		}
+		writeError(w, http.StatusConflict, fmt.Sprintf("calibration is %s and can no longer be edited", status))
 		return
 	}
 
-	// Replace standards: delete existing links then insert the current selection.
-	if _, err := tx.Exec(r.Context(),
-		`DELETE FROM calibration_standards_used WHERE record_id = $1`, id,
-	); err != nil {
-		slog.Error("calibrations.Update: delete standards failed", "record_id", id, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to update standards")
-		return
+	if body.Measurements != nil {
+		if err := replaceMeasurements(r.Context(), tx, id, body.Measurements); err != nil {
+			slog.Error("calibrations.Update: replace measurements failed", "record_id", id, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update measurements")
+			return
+		}
 	}
-	for _, stdID := range body.StandardIDs {
-		if _, err := tx.Exec(r.Context(),
-			`INSERT INTO calibration_standards_used (record_id, standard_id) VALUES ($1,$2)`,
-			id, stdID,
-		); err != nil {
-			slog.Error("calibrations.Update: standard link failed", "record_id", id, "standard_id", stdID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to link standard")
+	if body.StandardIDs != nil {
+		if err := replaceStandards(r.Context(), tx, id, body.StandardIDs); err != nil {
+			slog.Error("calibrations.Update: replace standards failed", "record_id", id, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update standards")
 			return
 		}
 	}
@@ -590,7 +674,7 @@ func (h *Handler) Reopen(w http.ResponseWriter, r *http.Request) {
 	tag, err := h.pool.Exec(r.Context(),
 		`UPDATE calibration_records
 		 SET status = 'in_progress', rejection_reason = NULL, updated_at = now()
-		 WHERE id = $1 AND tenant_id = $2`,
+		 WHERE id = $1 AND tenant_id = $2 AND status = 'rejected'`,
 		id, tenantID,
 	)
 	if err != nil {
@@ -599,7 +683,7 @@ func (h *Handler) Reopen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "calibration not found")
+		writeError(w, http.StatusNotFound, "no rejected calibration with that id")
 		return
 	}
 

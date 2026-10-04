@@ -747,3 +747,144 @@ func TestBulkDelete_Success(t *testing.T) {
 		t.Errorf("expected deleted=3, got %d", resp["deleted"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Offline sync guarantees (Create replay / Update locking)
+// ---------------------------------------------------------------------------
+
+// idRow scans a fixed string into the first destination.
+type idRow struct{ val string }
+
+func (r idRow) Scan(dests ...any) error {
+	if p, ok := dests[0].(*string); ok {
+		*p = r.val
+	}
+	return nil
+}
+
+// seqRows returns the given rows in order for successive QueryRow calls.
+func seqRows(rows ...pgx.Row) func() pgx.Row {
+	i := 0
+	return func() pgx.Row {
+		row := rows[i]
+		if i < len(rows)-1 {
+			i++
+		}
+		return row
+	}
+}
+
+func putCalibration(h *Handler, body string) *httptest.ResponseRecorder {
+	req := routeWithID(
+		withTenantAndUser(httptest.NewRequest(http.MethodPut, "/calibrations/abc", strings.NewReader(body))),
+		"abc",
+	)
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+	return rec
+}
+
+func postCalibration(h *Handler, body string) *httptest.ResponseRecorder {
+	req := withTenantAndUser(httptest.NewRequest(http.MethodPost, "/calibrations", strings.NewReader(body)))
+	rec := httptest.NewRecorder()
+	h.Create(rec, req)
+	return rec
+}
+
+func TestUpdate_RejectsApprovedStatus(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"status":"approved"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for status=approved, got %d", rec.Code)
+	}
+	if tx.execCalls != 0 {
+		t.Errorf("expected no writes, got %d exec calls", tx.execCalls)
+	}
+}
+
+func TestUpdate_LockedRecordReturns409(t *testing.T) {
+	tx := &mockTx{
+		execTag:    pgconn.NewCommandTag("UPDATE 0"),
+		queryRowFn: func() pgx.Row { return idRow{val: "approved"} },
+	}
+	rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"status":"in_progress","measurements":[]}`)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409 for locked record, got %d", rec.Code)
+	}
+	if tx.execCalls != 1 {
+		t.Errorf("expected only the guarded UPDATE, got %d exec calls", tx.execCalls)
+	}
+}
+
+func TestUpdate_OmittedStandardsAreKept(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"status":"pending_approval"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	// Only the UPDATE — no DELETE of standards or measurements.
+	if tx.execCalls != 1 {
+		t.Errorf("expected 1 exec call (update only), got %d", tx.execCalls)
+	}
+}
+
+func TestUpdate_ReplacesMeasurementsWhenProvided(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	body := `{"measurements":[{"point_label":"0%","standard_value":0,"as_found_value":null},{"point_label":"100%"}]}`
+	rec := putCalibration(newHandler(&mockDB{tx: tx}), body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	// UPDATE + DELETE measurements + 2 INSERTs = 4
+	if tx.execCalls != 4 {
+		t.Errorf("expected 4 exec calls, got %d", tx.execCalls)
+	}
+}
+
+func TestCreate_ClientIDReplacesChildren(t *testing.T) {
+	tx := &mockTx{
+		execTag:    pgconn.NewCommandTag("INSERT 0 1"),
+		queryRowFn: func() pgx.Row { return idRow{val: "11111111-1111-1111-1111-111111111111"} },
+	}
+	body := `{"id":"11111111-1111-1111-1111-111111111111","asset_id":"a1",
+		"measurements":[{"point_label":"0%"}],"standard_ids":["s1"]}`
+	rec := postCalibration(newHandler(&mockDB{tx: tx}), body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// DELETE measurements + 1 INSERT + DELETE standards + 1 INSERT = 4, so a
+	// replayed create replaces children instead of duplicating them.
+	if tx.execCalls != 4 {
+		t.Errorf("expected 4 exec calls, got %d", tx.execCalls)
+	}
+}
+
+func TestCreate_ReplayOnLockedRecordIsNoop(t *testing.T) {
+	tx := &mockTx{
+		execTag:    pgconn.NewCommandTag("INSERT 0 1"),
+		queryRowFn: seqRows(&errRow{err: pgx.ErrNoRows}, idRow{val: "approved"}),
+	}
+	body := `{"id":"11111111-1111-1111-1111-111111111111","asset_id":"a1","measurements":[{"point_label":"0%"}]}`
+	rec := postCalibration(newHandler(&mockDB{tx: tx}), body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 no-op, got %d", rec.Code)
+	}
+	if tx.execCalls != 0 {
+		t.Errorf("locked record must not be modified, got %d exec calls", tx.execCalls)
+	}
+}
+
+func TestCreate_IDOwnedByOtherTenantReturns409(t *testing.T) {
+	tx := &mockTx{
+		execTag:    pgconn.NewCommandTag("INSERT 0 1"),
+		queryRowFn: seqRows(&errRow{err: pgx.ErrNoRows}, &errRow{err: pgx.ErrNoRows}),
+	}
+	body := `{"id":"11111111-1111-1111-1111-111111111111","asset_id":"a1","measurements":[{"point_label":"0%"}]}`
+	rec := postCalibration(newHandler(&mockDB{tx: tx}), body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+	if tx.execCalls != 0 {
+		t.Errorf("other tenant's record must not be modified, got %d exec calls", tx.execCalls)
+	}
+}

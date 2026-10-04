@@ -1,6 +1,7 @@
 import { supabase } from '../supabase'
 import { db } from '../db'
 import type { LocalAsset } from '../db'
+import { pendingRecordIds } from '../sync/outbox'
 
 // ---------------------------------------------------------------------------
 // fetchAssets
@@ -16,10 +17,21 @@ export async function fetchAssets(tenantId: string): Promise<LocalAsset[]> {
 
   const assets = (data ?? []) as LocalAsset[]
 
-  // Cache in Dexie
-  await db.assets.bulkPut(assets)
-
-  return assets
+  // Cache in Dexie — except assets with unsynced local edits, which must not be
+  // overwritten by the older server copy. Those (and assets created offline)
+  // are shown from Dexie instead.
+  const pending = await pendingRecordIds()
+  if (pending.size === 0) {
+    await db.assets.bulkPut(assets)
+    return assets
+  }
+  await db.assets.bulkPut(assets.filter((a) => !pending.has(a.id)))
+  const unsynced = await db.assets
+    .where('tenant_id').equals(tenantId)
+    .filter((a) => pending.has(a.id))
+    .toArray()
+  const unsyncedIds = new Set(unsynced.map((a) => a.id))
+  return [...assets.filter((a) => !unsyncedIds.has(a.id)), ...unsynced]
 }
 
 // ---------------------------------------------------------------------------
