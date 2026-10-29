@@ -42,7 +42,7 @@ func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
 		ORDER BY a.next_due_at ASC
 	`, tenantID, days)
 	if err != nil {
-		slog.Error("assets.Schedule: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "assets.Schedule: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query scheduled assets")
 		return
 	}
@@ -64,7 +64,7 @@ func (h *Handler) Schedule(w http.ResponseWriter, r *http.Request) {
 		var a ScheduledAsset
 		if err := rows.Scan(&a.ID, &a.TagID, &a.Type, &a.SerialNumber,
 			&a.Manufacturer, &a.Model, &a.NextDueAt, &a.CustomerName); err != nil {
-			slog.Error("assets.Schedule: scan failed", "error", err)
+			slog.ErrorContext(r.Context(), "assets.Schedule: scan failed", "error", err)
 			continue
 		}
 		assets = append(assets, a)

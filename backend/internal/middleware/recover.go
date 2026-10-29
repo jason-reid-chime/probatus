@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 
 	"github.com/getsentry/sentry-go"
+
+	"github.com/jasonreid/probatus/internal/logging"
 )
 
 // Recoverer catches panics, reports them to Sentry (when initialised), logs
@@ -23,11 +25,12 @@ func Recoverer(next http.Handler) http.Handler {
 					sentry.CurrentHub().RecoverWithContext(r.Context(), rec)
 				}
 
-				slog.Error("panic recovered",
+				slog.ErrorContext(r.Context(), "panic recovered",
 					"error", rec,
 					"stack", string(stack),
 					"method", r.Method,
 					"path", r.URL.Path,
+					logging.ReportedKey, true, // already sent to Sentry above
 				)
 
 				w.Header().Set("Content-Type", "application/json")

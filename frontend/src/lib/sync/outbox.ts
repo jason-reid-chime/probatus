@@ -1,5 +1,6 @@
 import { db, type OutboxEntry } from '../db'
 import { supabase } from '../supabase'
+import { ApiError, reportApiError } from '../api/client'
 
 const API_URL = ((import.meta.env.VITE_API_URL as string | undefined) ?? '').replace(/\/$/, '') || 'http://localhost:8080'
 
@@ -116,7 +117,9 @@ async function processEntry(entry: OutboxEntry, token: string): Promise<void> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
-    throw new Error(`${res.status}: ${text}`)
+    const err = new ApiError(entry.method, entry.url, res.status, text)
+    reportApiError(err)
+    throw new Error(`${res.status}: ${err.message}`)
   }
 }
 

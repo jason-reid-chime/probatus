@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Receipt, Loader2 } from 'lucide-react'
 import { invoiceFromWorkOrder } from '../../lib/api/invoices'
+import { ApiError } from '../../lib/api/client'
 
 const inputClass = 'w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500'
 
@@ -28,6 +29,14 @@ export default function CreateInvoicePanel({ workOrderId, assetCount }: { workOr
       })
       navigate(`/invoices/${id}`)
     } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 409 && typeof err.body?.id === 'string') {
+          navigate(`/invoices/${err.body.id}`)
+          return
+        }
+        setError(err.message)
+        return
+      }
       const msg = err instanceof Error ? err.message : String(err)
       const existing = msg.match(/"id":"([0-9a-f-]{36})"/)
       if (msg.includes(' 409 ') && existing) {

@@ -158,7 +158,7 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				sub,
 			).Scan(&tenantID, &role)
 			if err != nil {
-				slog.Error("profile lookup failed", "sub", sub, "error", err)
+				slog.ErrorContext(r.Context(), "profile lookup failed", "sub", sub, "error", err)
 				writeAuthError(w, "user profile not found")
 				return
 			}

@@ -21,6 +21,7 @@ import (
 	"github.com/jasonreid/probatus/internal/customers"
 	"github.com/jasonreid/probatus/internal/db"
 	"github.com/jasonreid/probatus/internal/invoices"
+	"github.com/jasonreid/probatus/internal/logging"
 	"github.com/jasonreid/probatus/internal/middleware"
 	"github.com/jasonreid/probatus/internal/notifications"
 	"github.com/jasonreid/probatus/internal/standards"
@@ -52,6 +53,10 @@ func main() {
 	}
 
 	// Initialise Sentry — no-op when SENTRY_DSN is unset.
+	// Every slog.Error goes to stderr, to Sentry (once initialised below) and
+	// into the failing request's error response (see middleware.ErrorDetails).
+	slog.SetDefault(slog.New(logging.NewSentryHandler(slog.NewTextHandler(os.Stderr, nil))))
+
 	sentryEnabled := false
 	if dsn := os.Getenv("SENTRY_DSN"); dsn != "" {
 		if err := sentry.Init(sentry.ClientOptions{
@@ -109,6 +114,7 @@ func main() {
 	// Global middleware — order matters.
 	r.Use(chimiddleware.RequestID)  // attach X-Request-Id early so logger picks it up
 	r.Use(middleware.RequestLogger) // structured slog request logging
+	r.Use(middleware.ErrorDetails)  // 5xx bodies say what broke, with a request_id
 
 	// sentryhttp attaches a Sentry hub to every request context so that panics
 	// and manual CaptureException calls include full HTTP context (URL, method,

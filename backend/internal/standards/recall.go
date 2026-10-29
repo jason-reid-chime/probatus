@@ -49,7 +49,7 @@ func (h *Handler) Recall(w http.ResponseWriter, r *http.Request) {
 		body.RecallReason, id, tenantID,
 	)
 	if err != nil {
-		slog.Error("standards.Recall: exec failed", "standard_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "standards.Recall: exec failed", "standard_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to recall calibration records")
 		return
 	}

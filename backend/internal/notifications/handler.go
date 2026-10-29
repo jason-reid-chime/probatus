@@ -91,7 +91,7 @@ func (h *Handler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s, err := h.loadSettings(r.Context(), middleware.TenantIDFromCtx(r.Context()))
 	if err != nil {
-		slog.Error("notifications.GetSettings: failed", "error", err)
+		slog.ErrorContext(r.Context(), "notifications.GetSettings: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load settings")
 		return
 	}
@@ -154,7 +154,7 @@ func (h *Handler) PutSettings(w http.ResponseWriter, r *http.Request) {
 		   notify_customers = EXCLUDED.notify_customers, updated_at = now()`,
 		middleware.TenantIDFromCtx(r.Context()), s.Enabled, s.LeadDays, s.NotifyOverdue,
 		s.InternalRecipients, s.NotifyCustomers); err != nil {
-		slog.Error("notifications.PutSettings: failed", "error", err)
+		slog.ErrorContext(r.Context(), "notifications.PutSettings: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to save settings")
 		return
 	}
@@ -187,7 +187,7 @@ func (h *Handler) History(w http.ResponseWriter, r *http.Request) {
 		 WHERE n.tenant_id = $1 ORDER BY n.id DESC LIMIT 200`,
 		middleware.TenantIDFromCtx(r.Context()))
 	if err != nil {
-		slog.Error("notifications.History: failed", "error", err)
+		slog.ErrorContext(r.Context(), "notifications.History: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load history")
 		return
 	}
@@ -212,7 +212,7 @@ func (h *Handler) RunNow(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.RunTenant(r.Context(), middleware.TenantIDFromCtx(r.Context()))
 	if err != nil {
-		slog.Error("notifications.RunNow: failed", "error", err)
+		slog.ErrorContext(r.Context(), "notifications.RunNow: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to run alerts: "+err.Error())
 		return
 	}
@@ -393,7 +393,7 @@ func (h *Handler) RunTenant(ctx context.Context, tenantID string) (RunResult, er
 func (h *Handler) RunAll(ctx context.Context) {
 	rows, err := h.pool.Query(ctx, `SELECT tenant_id::text FROM notification_settings WHERE enabled`)
 	if err != nil {
-		slog.Error("notifications: listing tenants failed", "error", err)
+		slog.ErrorContext(ctx, "notifications: listing tenants failed", "error", err)
 		return
 	}
 	var tenants []string
@@ -407,7 +407,7 @@ func (h *Handler) RunAll(ctx context.Context) {
 	for _, t := range tenants {
 		res, err := h.RunTenant(ctx, t)
 		if err != nil {
-			slog.Error("notifications: run failed", "tenant_id", t, "error", err)
+			slog.ErrorContext(ctx, "notifications: run failed", "tenant_id", t, "error", err)
 			continue
 		}
 		if res.Sent+res.Failed > 0 {

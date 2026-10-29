@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, ExternalLink, Send, Trash2, Pencil, Loader2 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
-import { apiRequest, API_URL } from '../../lib/api/client'
+import { apiRequest, API_URL, ApiError } from '../../lib/api/client'
 import { buildCalibrationPayload } from '../../lib/api/calibrations'
 import SignaturePad from '../../components/SignaturePad'
 import { useAuth } from '../../hooks/useAuth'
@@ -310,7 +310,7 @@ export default function CalibrationDetail() {
       const res = await apiRequest('GET', `/calibrations/${record!.id}`) as { status?: string }
       backendStatus = res?.status ?? null
     } catch (err) {
-      if (err instanceof Error && err.message.includes('404')) {
+      if (err instanceof ApiError && err.status === 404) {
         // Standards of a never-synced record only exist in its queued outbox
         // body; fall back to the server's links when nothing is queued.
         const queued = (await db.outbox.toArray())
@@ -367,7 +367,7 @@ export default function CalibrationDetail() {
 
       queryClient.setQueryData(calibrationKeys.detail(record.id), updated)
     } catch (err) {
-      setSubmitError(String(err))
+      setSubmitError(err instanceof Error ? err.message : String(err))
     } finally {
       setSubmitting(false)
     }

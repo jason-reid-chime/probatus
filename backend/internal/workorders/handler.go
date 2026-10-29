@@ -107,7 +107,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	)
 	if err != nil {
-		slog.Error("workorders.List: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query work orders")
 		return
 	}
@@ -121,14 +121,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			&wo.Notes, &wo.ScheduledDate, &wo.Status, &wo.CreatedBy,
 			&wo.CreatedAt, &wo.UpdatedAt, &wo.CustomerName,
 		); err != nil {
-			slog.Error("workorders.List: scan failed", "tenant_id", tenantID, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan work order")
 			return
 		}
 		orders = append(orders, wo)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("workorders.List: iteration error", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating work orders")
 		return
 	}
@@ -163,7 +163,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("workorders.Get: query failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Get: query failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query work order")
 		return
 	}
@@ -177,7 +177,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
-		slog.Error("workorders.Get: assets query failed", "work_order_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Get: assets query failed", "work_order_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query work order assets")
 		return
 	}
@@ -187,14 +187,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	for aRows.Next() {
 		var a WorkOrderAsset
 		if err := aRows.Scan(&a.ID, &a.TagID, &a.InstrumentType, &a.SerialNumber, &a.Manufacturer, &a.Model); err != nil {
-			slog.Error("workorders.Get: asset scan failed", "work_order_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.Get: asset scan failed", "work_order_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan asset")
 			return
 		}
 		detail.Assets = append(detail.Assets, a)
 	}
 	if err := aRows.Err(); err != nil {
-		slog.Error("workorders.Get: asset iteration error", "work_order_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Get: asset iteration error", "work_order_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating assets")
 		return
 	}
@@ -209,7 +209,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
-		slog.Error("workorders.Get: technicians query failed", "work_order_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Get: technicians query failed", "work_order_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query work order technicians")
 		return
 	}
@@ -219,14 +219,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	for tRows.Next() {
 		var t WorkOrderTechnician
 		if err := tRows.Scan(&t.ID, &t.FullName); err != nil {
-			slog.Error("workorders.Get: technician scan failed", "work_order_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.Get: technician scan failed", "work_order_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan technician")
 			return
 		}
 		detail.Technicians = append(detail.Technicians, t)
 	}
 	if err := tRows.Err(); err != nil {
-		slog.Error("workorders.Get: technician iteration error", "work_order_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Get: technician iteration error", "work_order_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating technicians")
 		return
 	}
@@ -273,7 +273,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {
-		slog.Error("workorders.Create: begin transaction failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Create: begin transaction failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
@@ -287,7 +287,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		tenantID, body.CustomerID, body.Title, body.Notes, body.ScheduledDate, body.Status, userID,
 	).Scan(&woID)
 	if err != nil {
-		slog.Error("workorders.Create: insert failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Create: insert failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create work order")
 		return
 	}
@@ -298,7 +298,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			`INSERT INTO work_order_assets (work_order_id, asset_id) VALUES ($1, $2)`,
 			woID, assetID,
 		); err != nil {
-			slog.Error("workorders.Create: asset link failed", "work_order_id", woID, "asset_id", assetID, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.Create: asset link failed", "work_order_id", woID, "asset_id", assetID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to link asset")
 			return
 		}
@@ -310,14 +310,14 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 			`INSERT INTO work_order_technicians (work_order_id, technician_id) VALUES ($1, $2)`,
 			woID, techID,
 		); err != nil {
-			slog.Error("workorders.Create: technician link failed", "work_order_id", woID, "technician_id", techID, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.Create: technician link failed", "work_order_id", woID, "technician_id", techID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to link technician")
 			return
 		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("workorders.Create: commit failed", "work_order_id", woID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Create: commit failed", "work_order_id", woID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
@@ -347,7 +347,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {
-		slog.Error("workorders.Update: begin transaction failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Update: begin transaction failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
@@ -365,7 +365,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		id, tenantID, body.Title, body.Notes, body.ScheduledDate, body.Status, body.CustomerID,
 	)
 	if err != nil {
-		slog.Error("workorders.Update: exec failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Update: exec failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update work order")
 		return
 	}
@@ -379,7 +379,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.Exec(r.Context(),
 			`DELETE FROM work_order_assets WHERE work_order_id = $1`, id,
 		); err != nil {
-			slog.Error("workorders.Update: delete assets failed", "work_order_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.Update: delete assets failed", "work_order_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to replace assets")
 			return
 		}
@@ -388,7 +388,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 				`INSERT INTO work_order_assets (work_order_id, asset_id) VALUES ($1, $2)`,
 				id, assetID,
 			); err != nil {
-				slog.Error("workorders.Update: asset link failed", "work_order_id", id, "asset_id", assetID, "error", err)
+				slog.ErrorContext(r.Context(), "workorders.Update: asset link failed", "work_order_id", id, "asset_id", assetID, "error", err)
 				writeError(w, http.StatusInternalServerError, "failed to link asset")
 				return
 			}
@@ -400,7 +400,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.Exec(r.Context(),
 			`DELETE FROM work_order_technicians WHERE work_order_id = $1`, id,
 		); err != nil {
-			slog.Error("workorders.Update: delete technicians failed", "work_order_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "workorders.Update: delete technicians failed", "work_order_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to replace technicians")
 			return
 		}
@@ -409,7 +409,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 				`INSERT INTO work_order_technicians (work_order_id, technician_id) VALUES ($1, $2)`,
 				id, techID,
 			); err != nil {
-				slog.Error("workorders.Update: technician link failed", "work_order_id", id, "technician_id", techID, "error", err)
+				slog.ErrorContext(r.Context(), "workorders.Update: technician link failed", "work_order_id", id, "technician_id", techID, "error", err)
 				writeError(w, http.StatusInternalServerError, "failed to link technician")
 				return
 			}
@@ -417,7 +417,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("workorders.Update: commit failed", "work_order_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Update: commit failed", "work_order_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
@@ -443,7 +443,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
-		slog.Error("workorders.Delete: exec failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.Delete: exec failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete work order")
 		return
 	}
@@ -486,7 +486,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		body.Status, id, tenantID,
 	)
 	if err != nil {
-		slog.Error("workorders.UpdateStatus: exec failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "workorders.UpdateStatus: exec failed", "work_order_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update work order status")
 		return
 	}

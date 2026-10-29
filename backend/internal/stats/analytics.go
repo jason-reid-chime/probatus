@@ -108,7 +108,7 @@ func (h *Handler) Analytics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fail := func(step string, err error) {
-		slog.Error("stats.Analytics: query failed", "step", step, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "stats.Analytics: query failed", "step", step, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to compute analytics")
 	}
 

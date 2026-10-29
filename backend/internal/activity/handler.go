@@ -129,7 +129,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		ORDER BY a.id DESC
 		LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
-		slog.Error("activity.List: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "activity.List: query failed", "tenant_id", tenantID, "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load activity")
 		return
 	}
@@ -141,7 +141,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		var oldRaw, newRaw []byte
 		if err := rows.Scan(&e.ID, &e.CreatedAt, &e.UserID, &e.UserName, &e.Table,
 			&e.RecordID, &e.ParentID, &e.Action, &oldRaw, &newRaw); err != nil {
-			slog.Error("activity.List: scan failed", "error", err)
+			slog.ErrorContext(r.Context(), "activity.List: scan failed", "error", err)
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to load activity")
 			return
 		}
@@ -151,7 +151,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("activity.List: rows failed", "error", err)
+		slog.ErrorContext(r.Context(), "activity.List: rows failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load activity")
 		return
 	}
@@ -177,7 +177,7 @@ func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	if err := h.pool.QueryRow(ctx,
 		`SELECT checked, first_broken_id FROM audit_log_verify($1::uuid)`, tenantID,
 	).Scan(&resp.Checked, &resp.FirstBrokenID); err != nil {
-		slog.Error("activity.Verify: failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "activity.Verify: failed", "tenant_id", tenantID, "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to verify activity log")
 		return
 	}

@@ -68,7 +68,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		tenantID,
 	)
 	if err != nil {
-		slog.Error("customers.List: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "customers.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query customers")
 		return
 	}
@@ -78,14 +78,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		c := &Customer{}
 		if err := rows.Scan(&c.ID, &c.TenantID, &c.Name, &c.Contact, &c.Email, &c.Phone, &c.Address, &c.UpdatedAt); err != nil {
-			slog.Error("customers.List: scan failed", "tenant_id", tenantID, "error", err)
+			slog.ErrorContext(r.Context(), "customers.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan customer")
 			return
 		}
 		customers = append(customers, c)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("customers.List: iteration error", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "customers.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating customers")
 		return
 	}
@@ -142,7 +142,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	if err := row.Scan(&id); err != nil {
-		slog.Error("customers.Create: insert failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "customers.Create: insert failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create customer")
 		return
 	}
@@ -180,7 +180,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		id, tenantID, body.Name, body.Contact, body.Email, body.Phone, body.Address,
 	)
 	if err != nil {
-		slog.Error("customers.Update: exec failed", "customer_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "customers.Update: exec failed", "customer_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update customer")
 		return
 	}
@@ -204,7 +204,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		`UPDATE assets SET customer_id = NULL WHERE customer_id = $1 AND tenant_id = $2`,
 		id, tenantID,
 	); err != nil {
-		slog.Error("customers.Delete: failed to null asset customer_id", "customer_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "customers.Delete: failed to null asset customer_id", "customer_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to unlink assets from customer")
 		return
 	}
@@ -214,7 +214,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
-		slog.Error("customers.Delete: exec failed", "customer_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "customers.Delete: exec failed", "customer_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete customer")
 		return
 	}

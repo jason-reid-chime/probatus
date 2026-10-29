@@ -100,7 +100,7 @@ func (h *Handler) checkStandardsDueDate(r *http.Request, tenantID string, standa
 		standardIDs, tenantID,
 	)
 	if err != nil {
-		slog.Error("checkStandardsDueDate: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "checkStandardsDueDate: query failed", "tenant_id", tenantID, "error", err)
 		return "failed to validate standards"
 	}
 	defer rows.Close()
@@ -109,7 +109,7 @@ func (h *Handler) checkStandardsDueDate(r *http.Request, tenantID string, standa
 		var name string
 		var dueAt time.Time
 		if err := rows.Scan(&name, &dueAt); err != nil {
-			slog.Error("checkStandardsDueDate: scan failed", "tenant_id", tenantID, "error", err)
+			slog.ErrorContext(r.Context(), "checkStandardsDueDate: scan failed", "tenant_id", tenantID, "error", err)
 			return "failed to validate standards"
 		}
 		if dueAt.Before(today) {
@@ -145,7 +145,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(r.Context(), query, args...)
 	if err != nil {
-		slog.Error("calibrations.List: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.List: query failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query calibrations")
 		return
 	}
@@ -161,14 +161,14 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 			&rec.CertificateURL, &rec.Notes, &rec.LocalID,
 		)
 		if err != nil {
-			slog.Error("calibrations.List: scan failed", "tenant_id", tenantID, "error", err)
+			slog.ErrorContext(r.Context(), "calibrations.List: scan failed", "tenant_id", tenantID, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan calibration")
 			return
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("calibrations.List: iteration error", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.List: iteration error", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating calibrations")
 		return
 	}
@@ -203,7 +203,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("calibrations.Get: query failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Get: query failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query calibration")
 		return
 	}
@@ -218,7 +218,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
-		slog.Error("calibrations.Get: measurements query failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Get: measurements query failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to query measurements")
 		return
 	}
@@ -229,14 +229,14 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		var m Measurement
 		if err := mRows.Scan(&m.ID, &m.RecordID, &m.PointLabel, &m.StandardValue,
 			&m.MeasuredValue, &m.Unit, &m.Pass, &m.ErrorPct, &m.Notes); err != nil {
-			slog.Error("calibrations.Get: measurement scan failed", "record_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "calibrations.Get: measurement scan failed", "record_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan measurement")
 			return
 		}
 		rec.Measurements = append(rec.Measurements, m)
 	}
 	if err := mRows.Err(); err != nil {
-		slog.Error("calibrations.Get: measurement iteration error", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Get: measurement iteration error", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "error iterating measurements")
 		return
 	}
@@ -291,7 +291,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {
-		slog.Error("calibrations.Create: begin transaction failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Create: begin transaction failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
@@ -351,25 +351,25 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		).Scan(&recID)
 	}
 	if err != nil {
-		slog.Error("calibrations.Create: insert failed", "tenant_id", tenantID, "asset_id", body.AssetID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Create: insert failed", "tenant_id", tenantID, "asset_id", body.AssetID, "error", err)
 		writeDBError(w, err, "failed to create calibration record")
 		return
 	}
 
 	// Replace (not append) children so a replayed create never duplicates them.
 	if err := replaceMeasurements(r.Context(), tx, recID, body.Measurements); err != nil {
-		slog.Error("calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
 		writeDBError(w, err, "failed to insert measurement")
 		return
 	}
 	if err := replaceStandards(r.Context(), tx, recID, body.StandardIDs); err != nil {
-		slog.Error("calibrations.Create: standard link failed", "record_id", recID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Create: standard link failed", "record_id", recID, "error", err)
 		writeDBError(w, err, "failed to link standard")
 		return
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("calibrations.Create: commit failed", "record_id", recID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Create: commit failed", "record_id", recID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
@@ -512,7 +512,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.pool.Begin(r.Context())
 	if err != nil {
-		slog.Error("calibrations.Update: begin transaction failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Update: begin transaction failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
 		return
 	}
@@ -532,7 +532,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		body.SalesNumber, body.FlagNumber, body.Notes, body.LocalID,
 	)
 	if err != nil {
-		slog.Error("calibrations.Update: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Update: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to update calibration")
 		return
 	}
@@ -553,21 +553,21 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 
 	if body.Measurements != nil {
 		if err := replaceMeasurements(r.Context(), tx, id, body.Measurements); err != nil {
-			slog.Error("calibrations.Update: replace measurements failed", "record_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "calibrations.Update: replace measurements failed", "record_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to update measurements")
 			return
 		}
 	}
 	if body.StandardIDs != nil {
 		if err := replaceStandards(r.Context(), tx, id, body.StandardIDs); err != nil {
-			slog.Error("calibrations.Update: replace standards failed", "record_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "calibrations.Update: replace standards failed", "record_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to update standards")
 			return
 		}
 	}
 
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("calibrations.Update: commit failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Update: commit failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
 	}
@@ -618,7 +618,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("calibrations.Approve: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Approve: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to approve calibration")
 		return
 	}
@@ -632,7 +632,7 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		   AND (last_calibrated_at IS NULL OR last_calibrated_at <= $2)`,
 		assetID, performedAt,
 	); err != nil {
-		slog.Error("calibrations.Approve: failed to update asset dates", "asset_id", assetID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Approve: failed to update asset dates", "asset_id", assetID, "error", err)
 		// Non-fatal — approval succeeded; dates will be stale until next approval.
 	}
 
@@ -687,7 +687,7 @@ func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("calibrations.Reject: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Reject: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to reject calibration")
 		return
 	}
@@ -708,7 +708,7 @@ func (h *Handler) Reopen(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
-		slog.Error("calibrations.Reopen: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Reopen: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to reopen calibration")
 		return
 	}
@@ -737,7 +737,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		id, tenantID,
 	)
 	if err != nil {
-		slog.Error("calibrations.Delete: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.Delete: exec failed", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to delete calibration")
 		return
 	}
@@ -780,7 +780,7 @@ func (h *Handler) BulkApprove(w http.ResponseWriter, r *http.Request) {
 		userID, body.IDs, tenantID,
 	)
 	if err != nil {
-		slog.Error("calibrations.BulkApprove: exec failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.BulkApprove: exec failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
 		return
 	}
@@ -817,7 +817,7 @@ func (h *Handler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 		body.IDs, tenantID,
 	)
 	if err != nil {
-		slog.Error("calibrations.BulkDelete: exec failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.BulkDelete: exec failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to bulk delete calibrations")
 		return
 	}
@@ -848,7 +848,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		notes         string
 	}
 	err := pool.QueryRow(ctx,
-		`SELECT COALESCE(local_id,''), performed_at, technician_id::text,
+		`SELECT COALESCE(certificate_number::text, local_id, ''), performed_at, technician_id::text,
 		        COALESCE(supervisor_id::text,''), asset_id::text,
 		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
 		        COALESCE(sales_number,''), COALESCE(flag_number,''), COALESCE(notes,'')
@@ -860,7 +860,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		&rec.techSignature, &rec.supervisorSig, &rec.salesNumber, &rec.flagNumber, &rec.notes,
 	)
 	if err != nil {
-		slog.Error("sendCertificateEmail: failed to load record", "record_id", recordID, "error", err)
+		slog.ErrorContext(ctx, "sendCertificateEmail: failed to load record", "record_id", recordID, "error", err)
 		return
 	}
 
@@ -895,7 +895,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		&customerName, &customerContact,
 	)
 	if err != nil {
-		slog.Error("sendCertificateEmail: failed to load asset/customer", "record_id", recordID, "error", err)
+		slog.ErrorContext(ctx, "sendCertificateEmail: failed to load asset/customer", "record_id", recordID, "error", err)
 		return
 	}
 
@@ -945,7 +945,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		recordID,
 	)
 	if err != nil {
-		slog.Error("sendCertificateEmail: failed to load measurements", "record_id", recordID, "error", err)
+		slog.ErrorContext(ctx, "sendCertificateEmail: failed to load measurements", "record_id", recordID, "error", err)
 		return
 	}
 	var measurements []certMeasRow
@@ -955,7 +955,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		if err := mRows.Scan(&m.PointLabel, &m.StandardValue, &m.MeasuredValue,
 			&m.Unit, &m.ErrorPct, &m.Pass, &m.Notes); err != nil {
 			mRows.Close()
-			slog.Error("sendCertificateEmail: failed to scan measurement", "record_id", recordID, "error", err)
+			slog.ErrorContext(ctx, "sendCertificateEmail: failed to scan measurement", "record_id", recordID, "error", err)
 			return
 		}
 		if !m.Pass {
@@ -982,7 +982,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		recordID,
 	)
 	if err != nil {
-		slog.Error("sendCertificateEmail: failed to load standards", "record_id", recordID, "error", err)
+		slog.ErrorContext(ctx, "sendCertificateEmail: failed to load standards", "record_id", recordID, "error", err)
 		return
 	}
 	var standards []certStdRow
@@ -991,7 +991,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 		if err := sRows.Scan(&s.Name, &s.SerialNumber, &s.Model, &s.Manufacturer,
 			&s.CertificateRef, &s.DueAt); err != nil {
 			sRows.Close()
-			slog.Error("sendCertificateEmail: failed to scan standard", "record_id", recordID, "error", err)
+			slog.ErrorContext(ctx, "sendCertificateEmail: failed to scan standard", "record_id", recordID, "error", err)
 			return
 		}
 		standards = append(standards, s)
@@ -1033,7 +1033,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 
 	pdfBytes, err := generatePDF(ctx, htmlBody, certParams)
 	if err != nil {
-		slog.Error("sendCertificateEmail: failed to generate PDF", "record_id", recordID, "error", err)
+		slog.ErrorContext(ctx, "sendCertificateEmail: failed to generate PDF", "record_id", recordID, "error", err)
 		return
 	}
 
@@ -1077,7 +1077,7 @@ func sendCertificateEmail(pool querier, ctx context.Context, recordID, tenantID 
 	}
 
 	if err := email.Send(payload); err != nil {
-		slog.Error("sendCertificateEmail: failed to send email",
+		slog.ErrorContext(ctx, "sendCertificateEmail: failed to send email",
 			"record_id", recordID, "customer_email", customerContact, "error", err)
 		return
 	}

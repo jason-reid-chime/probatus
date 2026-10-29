@@ -17,6 +17,8 @@ if (dsn) {
     enabled: import.meta.env.PROD || !!dsn,
     integrations: [
       Sentry.browserTracingIntegration(),
+      // Report console.error calls too, so handled errors aren't lost.
+      Sentry.captureConsoleIntegration({ levels: ['error'] }),
     ],
   })
 }

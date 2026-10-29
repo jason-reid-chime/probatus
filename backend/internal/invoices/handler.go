@@ -180,7 +180,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.pool.Query(ctx, sql+" ORDER BY i.number DESC LIMIT 500", args...)
 	if err != nil {
-		slog.Error("invoices.List: query failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "invoices.List: query failed", "tenant_id", tenantID, "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to list invoices")
 		return
 	}
@@ -189,7 +189,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		inv, err := scanInvoice(rows)
 		if err != nil {
-			slog.Error("invoices.List: scan failed", "error", err)
+			slog.ErrorContext(r.Context(), "invoices.List: scan failed", "error", err)
 			httputil.WriteError(w, http.StatusInternalServerError, "failed to list invoices")
 			return
 		}
@@ -241,7 +241,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("invoices.Get: failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.Get: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load invoice")
 		return
 	}
@@ -317,7 +317,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id, err := h.create(ctx, in)
 	if err != nil {
-		slog.Error("invoices.Create: failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.Create: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to create invoice")
 		return
 	}
@@ -356,7 +356,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		tenantID, id, in.CustomerID, in.WorkOrderID, in.IssueDate, in.DueDate,
 		strings.ToUpper(in.Currency), in.TaxRate, in.Notes)
 	if err != nil {
-		slog.Error("invoices.Update: failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.Update: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to update invoice")
 		return
 	}
@@ -365,7 +365,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := replaceLines(ctx, tx, id, in.Lines); err != nil {
-		slog.Error("invoices.Update: lines failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.Update: lines failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to update invoice lines")
 		return
 	}
@@ -387,7 +387,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		`DELETE FROM invoices WHERE tenant_id = $1 AND id = $2::uuid AND status = 'draft'`,
 		middleware.TenantIDFromCtx(ctx), chi.URLParam(r, "id"))
 	if err != nil {
-		slog.Error("invoices.Delete: failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.Delete: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to delete invoice")
 		return
 	}
@@ -429,7 +429,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Error("invoices.UpdateStatus: load failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.UpdateStatus: load failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load invoice")
 		return
 	}
@@ -458,7 +458,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 			Subject: fmt.Sprintf("Invoice #%d from %s", inv.Number, tenantName),
 			Html:    InvoiceEmailHTML(inv, tenantName),
 		}); err != nil {
-			slog.Error("invoices.UpdateStatus: email failed", "invoice_id", id, "error", err)
+			slog.ErrorContext(r.Context(), "invoices.UpdateStatus: email failed", "invoice_id", id, "error", err)
 			httputil.WriteError(w, http.StatusBadGateway, "failed to email the invoice: "+err.Error())
 			return
 		}
@@ -470,7 +470,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		        paid_at = CASE WHEN $3 = 'paid' THEN now() WHEN $3 = 'sent' THEN NULL ELSE paid_at END
 		 WHERE tenant_id = $1 AND id = $2::uuid`,
 		tenantID, id, body.Status); err != nil {
-		slog.Error("invoices.UpdateStatus: update failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.UpdateStatus: update failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to update invoice")
 		return
 	}
@@ -508,7 +508,7 @@ func (h *Handler) FromWorkOrder(w http.ResponseWriter, r *http.Request) {
 		httputil.WriteError(w, http.StatusNotFound, "work order not found")
 		return
 	} else if err != nil {
-		slog.Error("invoices.FromWorkOrder: load failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.FromWorkOrder: load failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load work order")
 		return
 	}
@@ -530,7 +530,7 @@ func (h *Handler) FromWorkOrder(w http.ResponseWriter, r *http.Request) {
 		 WHERE woa.work_order_id = $1::uuid
 		 ORDER BY a.tag_id`, woID)
 	if err != nil {
-		slog.Error("invoices.FromWorkOrder: assets failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.FromWorkOrder: assets failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to load work order assets")
 		return
 	}
@@ -566,7 +566,7 @@ func (h *Handler) FromWorkOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.create(ctx, in)
 	if err != nil {
-		slog.Error("invoices.FromWorkOrder: create failed", "error", err)
+		slog.ErrorContext(r.Context(), "invoices.FromWorkOrder: create failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to create invoice")
 		return
 	}

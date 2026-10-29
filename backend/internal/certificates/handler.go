@@ -492,7 +492,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	var data certData
 	var techID, supervisorID string
 	err := h.pool.QueryRow(r.Context(),
-		`SELECT id::text, COALESCE(local_id,''), COALESCE(sales_number,''),
+		`SELECT id::text, COALESCE(certificate_number::text, local_id, ''), COALESCE(sales_number,''),
 		        COALESCE(flag_number,''), performed_at, approved_at, status,
 		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
 		        COALESCE(notes,''), technician_id::text, COALESCE(supervisor_id::text,'')
@@ -506,7 +506,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		&techID, &supervisorID,
 	)
 	if err != nil {
-		slog.Error("Generate: record query failed", "id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "Generate: record query failed", "id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusNotFound, "calibration not found")
 		return
 	}
@@ -531,7 +531,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		&data.CustomerName, &data.CustomerContact,
 	)
 	if err != nil {
-		slog.Error("Generate: asset query failed", "id", id, "error", err)
+		slog.ErrorContext(r.Context(), "Generate: asset query failed", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load asset details")
 		return
 	}
@@ -569,7 +569,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
-		slog.Error("Generate: measurements query failed", "id", id, "error", err)
+		slog.ErrorContext(r.Context(), "Generate: measurements query failed", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load measurements")
 		return
 	}
@@ -578,7 +578,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		var m measurementRow
 		if err := mRows.Scan(&m.PointLabel, &m.StandardValue, &m.MeasuredValue,
 			&m.Unit, &m.ErrorPct, &m.Pass, &m.Notes); err != nil {
-			slog.Error("Generate: measurement scan failed", "id", id, "error", err)
+			slog.ErrorContext(r.Context(), "Generate: measurement scan failed", "id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan measurement")
 			return
 		}
@@ -596,7 +596,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		id,
 	)
 	if err != nil {
-		slog.Error("Generate: standards query failed", "id", id, "error", err)
+		slog.ErrorContext(r.Context(), "Generate: standards query failed", "id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to load standards")
 		return
 	}
@@ -605,7 +605,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		var s standardRow
 		if err := sRows.Scan(&s.Name, &s.SerialNumber, &s.Model, &s.Manufacturer,
 			&s.CertificateRef, &s.DueAt); err != nil {
-			slog.Error("Generate: standard scan failed", "id", id, "error", err)
+			slog.ErrorContext(r.Context(), "Generate: standard scan failed", "id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to scan standard")
 			return
 		}
@@ -629,14 +629,14 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpl, err := template.New("cert").Funcs(funcMap).Parse(certHTMLTemplate)
 	if err != nil {
-		slog.Error("certificates.Generate: template parse failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.Generate: template parse failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to parse certificate template")
 		return
 	}
 
 	var htmlBuf bytes.Buffer
 	if err := tmpl.Execute(&htmlBuf, data); err != nil {
-		slog.Error("certificates.Generate: template execute failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.Generate: template execute failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to render certificate template")
 		return
 	}
@@ -644,7 +644,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 	// --- Generate PDF (Gotenberg if available, pure-Go fallback otherwise) ---
 	pdfBytes, err := generateCertPDF(r.Context(), htmlBuf, data)
 	if err != nil {
-		slog.Error("certificates.Generate: PDF generation failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.Generate: PDF generation failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate PDF")
 		return
 	}
@@ -671,7 +671,7 @@ func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
 
 	data, err := h.loadCertData(r, id, tenantID)
 	if err != nil {
-		slog.Error("certificates.SendEmail: failed to load cert data", "record_id", id, "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.SendEmail: failed to load cert data", "record_id", id, "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusNotFound, "calibration not found")
 		return
 	}
@@ -689,20 +689,20 @@ func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	tmpl, err := template.New("cert").Funcs(funcMap).Parse(certHTMLTemplate)
 	if err != nil {
-		slog.Error("certificates.SendEmail: template parse failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.SendEmail: template parse failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to parse certificate template")
 		return
 	}
 	var htmlBuf bytes.Buffer
 	if err := tmpl.Execute(&htmlBuf, data); err != nil {
-		slog.Error("certificates.SendEmail: template execute failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.SendEmail: template execute failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to render certificate template")
 		return
 	}
 
 	pdfBytes, err := generateCertPDF(r.Context(), htmlBuf, data)
 	if err != nil {
-		slog.Error("certificates.SendEmail: PDF generation failed", "record_id", id, "error", err)
+		slog.ErrorContext(r.Context(), "certificates.SendEmail: PDF generation failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to generate PDF")
 		return
 	}
@@ -723,7 +723,7 @@ func (h *Handler) SendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := email.Send(payload); err != nil {
-		slog.Error("SendEmail: failed to send certificate email", "record_id", id, "to", body.Email, "error", err)
+		slog.ErrorContext(r.Context(), "SendEmail: failed to send certificate email", "record_id", id, "to", body.Email, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to send email")
 		return
 	}
@@ -739,7 +739,7 @@ func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, 
 	var data certData
 	var techID, supervisorID string
 	err := h.pool.QueryRow(r.Context(),
-		`SELECT id::text, COALESCE(local_id,''), COALESCE(sales_number,''),
+		`SELECT id::text, COALESCE(certificate_number::text, local_id, ''), COALESCE(sales_number,''),
 		        COALESCE(flag_number,''), performed_at, approved_at, status,
 		        COALESCE(tech_signature,''), COALESCE(supervisor_signature,''),
 		        COALESCE(notes,''), technician_id::text, COALESCE(supervisor_id::text,'')
