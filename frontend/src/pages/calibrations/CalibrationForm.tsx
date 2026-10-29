@@ -39,6 +39,18 @@ import TransmitterTemplate, {
   buildDefaultTransmitterRows,
   type TransmitterRow,
 } from './templates/TransmitterTemplate'
+import BackflowTemplate, {
+  buildDefaultBackflowRows,
+  backflowRowsFromTemplate,
+  backflowRowsFromMeasurements,
+  backflowMeasurements,
+  emptyBackflowConditions,
+  composeBackflowNotes,
+  parseBackflowNotes,
+  BACKFLOW_DEFAULT_SPAN,
+  type BackflowRow,
+  type BackflowConditions,
+} from './templates/BackflowTemplate'
 
 // ---------------------------------------------------------------------------
 // Toast — minimal local implementation
@@ -339,6 +351,8 @@ export default function CalibrationForm() {
   const [switchData, setSwitchData] = useState<SwitchData>(buildDefaultSwitchData())
   const [conductivityData, setConductivityData] = useState<ConductivityData>(buildDefaultConductivityData())
   const [transmitterRows, setTransmitterRows] = useState<TransmitterRow[]>([])
+  const [backflowRows, setBackflowRows] = useState<BackflowRow[]>(buildDefaultBackflowRows())
+  const [backflowConditions, setBackflowConditions] = useState<BackflowConditions>(emptyBackflowConditions())
 
   const [selectedStandardIds, setSelectedStandardIds] = useState<string[]>([])
   const [toast, setToast] = useState<string | null>(null)
@@ -384,7 +398,13 @@ export default function CalibrationForm() {
         if (rec) {
           setSalesNumber(rec.sales_number ?? '')
           setFlagNumber(rec.flag_number ?? '')
-          setNotes(rec.notes ?? '')
+          if (a?.instrument_type === 'backflow_test_kit') {
+            const parsed = parseBackflowNotes(rec.notes ?? '')
+            setBackflowConditions(parsed.conditions)
+            setNotes(parsed.freeNotes)
+          } else {
+            setNotes(rec.notes ?? '')
+          }
           setTechSignature((rec as unknown as { tech_signature?: string }).tech_signature ?? '')
         }
 
@@ -465,6 +485,8 @@ export default function CalibrationForm() {
             if (standards.length > 0) {
               setConductivityData(prev => ({ ...prev, standards }))
             }
+          } else if (type === 'backflow_test_kit') {
+            setBackflowRows(backflowRowsFromMeasurements(measurements))
           } else if (type === 'transmitter_4_20ma' && a) {
             const pvMeasurements = measurements.filter(m => m.point_label.endsWith('% PV'))
             if (pvMeasurements.length > 0) {
@@ -503,6 +525,10 @@ export default function CalibrationForm() {
     else if (type === 'level_4_20ma' || type === 'flow') raw = levelMeasurements(recordId, levelRows)
     else if (type === 'transmitter_4_20ma') raw = transmitterMeasurements(recordId, transmitterRows)
     else if (type === 'pressure_switch' || type === 'temperature_switch') raw = switchMeasurements(recordId, switchData, asset)
+    else if (type === 'backflow_test_kit') {
+      const span = (asset.range_max ?? 0) - (asset.range_min ?? 0)
+      raw = backflowMeasurements(recordId, backflowRows, span > 0 ? span : BACKFLOW_DEFAULT_SPAN)
+    }
     else raw = []
 
     // Assign stable IDs so that re-saves upsert the same rows rather than
@@ -513,7 +539,7 @@ export default function CalibrationForm() {
       if (!idMap.has(m.point_label)) idMap.set(m.point_label, crypto.randomUUID())
       return { ...m, id: idMap.get(m.point_label)! }
     })
-  }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, recordId])
+  }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, backflowRows, recordId])
 
   const result = useMemo(() => {
     if (!asset) return 'INCOMPLETE' as const
@@ -571,6 +597,9 @@ export default function CalibrationForm() {
           expiry: '',
         })),
       }))
+    } else if (type === 'backflow_test_kit') {
+      const rows = backflowRowsFromTemplate(template.points)
+      if (rows.length > 0) setBackflowRows(rows)
     } else if (type === 'transmitter_4_20ma' && asset) {
       setTransmitterRows(
         template.points.map((p, i) => ({
@@ -607,7 +636,9 @@ export default function CalibrationForm() {
         updated_at: now,
         sales_number: salesNumber || undefined,
         flag_number: flagNumber || undefined,
-        notes: notes || undefined,
+        notes: (asset.instrument_type === 'backflow_test_kit'
+          ? composeBackflowNotes(backflowConditions, notes)
+          : notes) || undefined,
         tech_signature: techSignature || undefined,
       }
 
@@ -805,6 +836,15 @@ export default function CalibrationForm() {
 
         {isTransmitter && (
           <TransmitterTemplate asset={asset} rows={transmitterRows} onChange={setTransmitterRows} />
+        )}
+
+        {typeLower === 'backflow_test_kit' && (
+          <BackflowTemplate
+            rows={backflowRows}
+            onChange={setBackflowRows}
+            conditions={backflowConditions}
+            onConditionsChange={setBackflowConditions}
+          />
         )}
 
         {isSwitch && (

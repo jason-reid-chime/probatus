@@ -2,6 +2,8 @@ export interface TemplatePoint {
   label: string
   standard_value: number | null
   unit: string
+  /** Optional absolute ± tolerance in `unit` (e.g. 0.2 PSID for backflow kits). */
+  tolerance_abs?: number | null
 }
 
 export interface CalibrationTemplate {
@@ -9,7 +11,7 @@ export interface CalibrationTemplate {
   tenant_id: string
   name: string
   description?: string
-  instrument_type: 'pressure' | 'temperature' | 'ph_conductivity' | 'conductivity' | 'level_4_20ma' | 'flow' | 'transmitter_4_20ma' | 'pressure_switch' | 'temperature_switch' | 'other'
+  instrument_type: 'pressure' | 'temperature' | 'ph_conductivity' | 'conductivity' | 'level_4_20ma' | 'flow' | 'transmitter_4_20ma' | 'pressure_switch' | 'temperature_switch' | 'backflow_test_kit' | 'other'
   tolerance_pct: number
   points: TemplatePoint[]
   created_by?: string

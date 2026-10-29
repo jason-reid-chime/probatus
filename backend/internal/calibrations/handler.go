@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -351,19 +352,19 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Error("calibrations.Create: insert failed", "tenant_id", tenantID, "asset_id", body.AssetID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to create calibration record")
+		writeDBError(w, err, "failed to create calibration record")
 		return
 	}
 
 	// Replace (not append) children so a replayed create never duplicates them.
 	if err := replaceMeasurements(r.Context(), tx, recID, body.Measurements); err != nil {
 		slog.Error("calibrations.Create: measurement insert failed", "record_id", recID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to insert measurement")
+		writeDBError(w, err, "failed to insert measurement")
 		return
 	}
 	if err := replaceStandards(r.Context(), tx, recID, body.StandardIDs); err != nil {
 		slog.Error("calibrations.Create: standard link failed", "record_id", recID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to link standard")
+		writeDBError(w, err, "failed to link standard")
 		return
 	}
 
@@ -379,6 +380,35 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"id": recID})
+}
+
+// writeDBError responds to a failed calibration write. Errors caused by the
+// request itself (a missing asset or standard, a malformed id) become a 4xx
+// naming the problem, so the client stops retrying and the user sees why;
+// anything else is a 500 with fallback as the message.
+func writeDBError(w http.ResponseWriter, err error, fallback string) {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23503": // foreign_key_violation
+			switch pgErr.ConstraintName {
+			case "calibration_records_asset_id_fkey":
+				writeError(w, http.StatusUnprocessableEntity,
+					"the asset for this calibration does not exist on the server — sync or re-create the asset first")
+			case "calibration_records_technician_id_fkey":
+				writeError(w, http.StatusUnprocessableEntity, "your user profile was not found on the server")
+			case "calibration_standards_used_standard_id_fkey":
+				writeError(w, http.StatusUnprocessableEntity, "a selected master standard no longer exists")
+			default:
+				writeError(w, http.StatusUnprocessableEntity, "referenced record not found ("+pgErr.ConstraintName+")")
+			}
+			return
+		case "22P02", "23502", "23514": // invalid_text_representation, not_null_violation, check_violation
+			writeError(w, http.StatusBadRequest, "invalid calibration data: "+pgErr.Message)
+			return
+		}
+	}
+	writeError(w, http.StatusInternalServerError, fallback)
 }
 
 // editableStatusesSQL lists the statuses in which a technician may still change

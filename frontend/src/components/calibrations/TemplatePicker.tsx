@@ -14,11 +14,13 @@ const instrumentTypeLabels: Record<string, string> = {
   temperature: 'Temperature',
   ph_conductivity: 'pH / Conductivity',
   level_4_20ma: 'Level (4–20 mA)',
+  backflow_test_kit: 'Backflow Test Kit',
   other: 'Other',
 }
 
 function normaliseInstrumentType(raw: string): string {
   const lower = raw.toLowerCase()
+  if (lower === 'backflow_test_kit') return 'backflow_test_kit'
   if (lower.includes('pressure')) return 'pressure'
   if (lower.includes('temperature')) return 'temperature'
   if (lower.includes('ph') || lower.includes('conductivity')) return 'ph_conductivity'

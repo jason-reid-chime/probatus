@@ -15,6 +15,9 @@ const pointSchema = z.object({
   label: z.string().min(1, 'Label is required'),
   standard_value: z.union([z.number(), z.null()]),
   unit: z.string(),
+  // Absolute ± tolerance (backflow kits). Kept so editing a seeded template
+  // in this form doesn't strip it.
+  tolerance_abs: z.number().nullable().optional(),
 })
 
 const schema = z.object({
@@ -30,6 +33,7 @@ const schema = z.object({
     'transmitter_4_20ma',
     'pressure_switch',
     'temperature_switch',
+    'backflow_test_kit',
     'other',
   ]),
   tolerance_pct: z
@@ -82,6 +86,13 @@ function defaultPoints(
       return [
         { label: 'Setpoint', standard_value: null, unit: '' },
       ]
+    case 'backflow_test_kit':
+      return [14, 12, 10, 8, 6, 4, 2, 0].map((v) => ({
+        label: v === 0 ? '0 PSID' : `${v.toFixed(1)} PSID`,
+        standard_value: v,
+        unit: 'PSID',
+        tolerance_abs: v === 0 ? 0 : 0.2,
+      }))
     case 'other':
     default:
       return [{ label: '', standard_value: null, unit: '' }]
@@ -104,6 +115,7 @@ const INSTRUMENT_TYPES: {
   { value: 'temperature_switch', label: 'Temperature Switch' },
   { value: 'ph_conductivity', label: 'pH / Conductivity' },
   { value: 'conductivity', label: 'Conductivity' },
+  { value: 'backflow_test_kit', label: 'Backflow Test Kit (±PSID)' },
   { value: 'other', label: 'Other' },
 ]
 

@@ -5,6 +5,7 @@ import { CheckCircle, XCircle, Clock, RefreshCw, Wifi, WifiOff, FileDown, Extern
 import { supabase } from '../../lib/supabase'
 import { useCalibrationRecord, useMeasurementsByRecord, calibrationKeys } from '../../hooks/useCalibration'
 import { apiRequest, API_URL } from '../../lib/api/client'
+import { buildCalibrationPayload } from '../../lib/api/calibrations'
 import SignaturePad from '../../components/SignaturePad'
 import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
@@ -310,26 +311,15 @@ export default function CalibrationDetail() {
       backendStatus = res?.status ?? null
     } catch (err) {
       if (err instanceof Error && err.message.includes('404')) {
-        await apiRequest('POST', '/calibrations', {
-          id:             record!.id,
-          asset_id:       record!.asset_id,
-          performed_at:   record!.performed_at,
-          sales_number:   record!.sales_number,
-          flag_number:    record!.flag_number,
-          tech_signature: record!.tech_signature,
-          notes:          record!.notes,
-          local_id:       record!.local_id,
-          standard_ids:   [],
-          measurements:   measurements.map((m) => ({
-            point_label:    m.point_label,
-            standard_value: m.standard_value ?? 0,
-            measured_value: m.measured_value ?? 0,
-            unit:           m.unit ?? '',
-            pass:           m.pass ?? false,
-            error_pct:      m.error_pct ?? 0,
-            notes:          m.notes ?? '',
-          })),
-        })
+        // Standards of a never-synced record only exist in its queued outbox
+        // body; fall back to the server's links when nothing is queued.
+        const queued = (await db.outbox.toArray())
+          .filter((e) => e.body?.id === record!.id && Array.isArray(e.body?.standard_ids))
+          .pop()
+        const standardIds = (queued?.body?.standard_ids as string[] | undefined)
+          ?? standardsUsed.map((s) => s.id)
+        await apiRequest('POST', '/calibrations',
+          buildCalibrationPayload(record!, measurements, standardIds))
         backendStatus = 'in_progress'
       }
     }

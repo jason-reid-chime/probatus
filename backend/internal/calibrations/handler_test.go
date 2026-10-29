@@ -227,6 +227,33 @@ func TestCreate_InvalidPerformedAt(t *testing.T) {
 	}
 }
 
+func TestCreate_InsertErrorMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"missing asset", &pgconn.PgError{Code: "23503", ConstraintName: "calibration_records_asset_id_fkey"}, http.StatusUnprocessableEntity},
+		{"bad uuid", &pgconn.PgError{Code: "22P02", Message: "invalid input syntax for type uuid"}, http.StatusBadRequest},
+		{"other db error", fmt.Errorf("connection reset"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := &mockTx{queryRowFn: func() pgx.Row { return &errRow{err: tc.err} }}
+			h := newHandler(&mockDB{tx: tx})
+			body := `{"id":"11111111-1111-1111-1111-111111111111","asset_id":"asset-1"}`
+			req := withTenantAndUser(
+				httptest.NewRequest(http.MethodPost, "/calibrations", strings.NewReader(body)),
+			)
+			rec := httptest.NewRecorder()
+			h.Create(rec, req)
+			if rec.Code != tc.want {
+				t.Errorf("expected %d, got %d (%s)", tc.want, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Get
 // ---------------------------------------------------------------------------

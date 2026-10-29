@@ -53,8 +53,8 @@ describe('INSTRUMENT_DEFAULTS', () => {
     expect(INSTRUMENT_DEFAULTS.other.unit).toBe('')
   })
 
-  it('INSTRUMENT_TYPE_VALUES contains exactly 10 types', () => {
-    expect(INSTRUMENT_TYPE_VALUES).toHaveLength(10)
+  it('INSTRUMENT_TYPE_VALUES contains exactly 11 types', () => {
+    expect(INSTRUMENT_TYPE_VALUES).toHaveLength(11)
   })
 
   // Type guard — ensures the type export works correctly at runtime

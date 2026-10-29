@@ -12,6 +12,7 @@ export const INSTRUMENT_TYPE_VALUES = [
   'transmitter_4_20ma',
   'pressure_switch',
   'temperature_switch',
+  'backflow_test_kit',
   'other',
 ] as const
 
@@ -33,5 +34,6 @@ export const INSTRUMENT_DEFAULTS: Record<InstrumentType, InstrumentDefaults> = {
   transmitter_4_20ma: { unit: 'mA',    min: 4,  max: 20   },
   pressure_switch:    { unit: 'psi',   min: 0,  max: 100  },
   temperature_switch: { unit: '°C',    min: 0,  max: 150  },
+  backflow_test_kit:  { unit: 'PSID',  min: 0,  max: 15   },
   other:              { unit: '',      min: 0,  max: 100  },
 }

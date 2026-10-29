@@ -29,6 +29,7 @@ const assetSchema = z.object({
     'transmitter_4_20ma',
     'pressure_switch',
     'temperature_switch',
+    'backflow_test_kit',
     'other',
   ]),
   // Numeric range fields: coerce from string input, blank → undefined
@@ -418,6 +419,7 @@ export default function AssetForm() {
                     <option value="flow">Flow / 4-20 mA</option>
                     <option value="pressure_switch">Pressure Switch</option>
                     <option value="temperature_switch">Temperature Switch</option>
+                    <option value="backflow_test_kit">Backflow Test Kit</option>
                     <option value="ph_conductivity">pH / Conductivity</option>
                     <option value="conductivity">Conductivity</option>
                     <option value="other">Other</option>
