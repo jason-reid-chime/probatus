@@ -1,6 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import { CheckCircle, XCircle } from 'lucide-react'
 import type { LocalAsset } from '../../../lib/db'
+import { hasReading } from '../../../utils/copyAsFound'
+import { CopyAllAsFoundButton, CopyRowAsFoundButton } from '../../../components/calibrations/CopyAsFound'
 
 export interface SwitchData {
   setpoint: string      // target trip point
@@ -15,6 +17,16 @@ interface SwitchTemplateProps {
   asset: LocalAsset
   data: SwitchData
   onChange: (data: SwitchData) => void
+  /** Locked record: hides the As Found → As Left copy controls. */
+  readOnly?: boolean
+}
+
+/** Copy As Found → As Left for the trip and/or reset point (skips blanks). */
+export function copySwitchAsFound(data: SwitchData, which: 'trip' | 'reset' | 'all' = 'all'): SwitchData {
+  const next = { ...data }
+  if ((which === 'trip' || which === 'all') && hasReading(data.asFoundTrip)) next.asLeftTrip = data.asFoundTrip
+  if ((which === 'reset' || which === 'all') && hasReading(data.asFoundReset)) next.asLeftReset = data.asFoundReset
+  return next
 }
 
 export function buildDefaultSwitchData(): SwitchData {
@@ -28,7 +40,7 @@ export function buildDefaultSwitchData(): SwitchData {
   }
 }
 
-export default function SwitchTemplate({ asset, data, onChange }: SwitchTemplateProps) {
+export default function SwitchTemplate({ asset, data, onChange, readOnly = false }: SwitchTemplateProps) {
   const unit = asset.range_unit ?? ''
   const span = (asset.range_max ?? 100) - (asset.range_min ?? 0)
   const setpointNum = parseFloat(data.setpoint)
@@ -93,6 +105,14 @@ export default function SwitchTemplate({ asset, data, onChange }: SwitchTemplate
       </div>
 
       {/* Measurement table */}
+      {!readOnly && (
+        <div className="flex justify-end">
+          <CopyAllAsFoundButton
+            disabled={!hasReading(data.asFoundTrip) && !hasReading(data.asFoundReset)}
+            onClick={() => onChange(copySwitchAsFound(data, 'all'))}
+          />
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
@@ -119,19 +139,29 @@ export default function SwitchTemplate({ asset, data, onChange }: SwitchTemplate
                   value={data.asFoundTrip}
                   onChange={(e) => field('asFoundTrip', e.target.value)}
                   placeholder="—"
+                  aria-label="As found trip"
                   className={inputClass}
                 />
               </td>
               <td className="px-3 py-1">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="any"
-                  value={data.asLeftTrip}
-                  onChange={(e) => field('asLeftTrip', e.target.value)}
-                  placeholder="—"
-                  className={inputClass}
-                />
+                <div className="flex items-center gap-1">
+                  {!readOnly && (
+                    <CopyRowAsFoundButton
+                      disabled={!hasReading(data.asFoundTrip)}
+                      onClick={() => onChange(copySwitchAsFound(data, 'trip'))}
+                    />
+                  )}
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={data.asLeftTrip}
+                    onChange={(e) => field('asLeftTrip', e.target.value)}
+                    placeholder="—"
+                    aria-label="As left trip"
+                    className={`${inputClass} min-w-[6rem]`}
+                  />
+                </div>
               </td>
               <td className="px-3 py-2 text-center font-mono font-semibold">
                 {tripResult ? (
@@ -161,19 +191,29 @@ export default function SwitchTemplate({ asset, data, onChange }: SwitchTemplate
                   value={data.asFoundReset}
                   onChange={(e) => field('asFoundReset', e.target.value)}
                   placeholder="—"
+                  aria-label="As found reset"
                   className={inputClass}
                 />
               </td>
               <td className="px-3 py-1">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="any"
-                  value={data.asLeftReset}
-                  onChange={(e) => field('asLeftReset', e.target.value)}
-                  placeholder="—"
-                  className={inputClass}
-                />
+                <div className="flex items-center gap-1">
+                  {!readOnly && (
+                    <CopyRowAsFoundButton
+                      disabled={!hasReading(data.asFoundReset)}
+                      onClick={() => onChange(copySwitchAsFound(data, 'reset'))}
+                    />
+                  )}
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    value={data.asLeftReset}
+                    onChange={(e) => field('asLeftReset', e.target.value)}
+                    placeholder="—"
+                    aria-label="As left reset"
+                    className={`${inputClass} min-w-[6rem]`}
+                  />
+                </div>
               </td>
               <td className="px-3 py-2 text-center font-mono font-semibold">
                 {resetResult ? (

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -70,12 +72,27 @@ type mockTx struct {
 	execCalls  int
 	execTag    pgconn.CommandTag
 	execErr    error
+	execFn     func(sql string) (pgconn.CommandTag, error) // overrides execTag/execErr when set
 	queryRowFn func() pgx.Row
+	queryFn    func() (pgx.Rows, error) // nil → empty result
 	commitErr  error
+
+	// Recorded calls, for assertions.
+	execSQL    []string
+	execArgs   [][]any
+	querySQL   []string
+	queryArgs  [][]any
+	committed  bool
+	rolledBack bool
 }
 
-func (t *mockTx) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+func (t *mockTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	t.execCalls++
+	t.execSQL = append(t.execSQL, sql)
+	t.execArgs = append(t.execArgs, args)
+	if t.execFn != nil {
+		return t.execFn(sql)
+	}
 	return t.execTag, t.execErr
 }
 func (t *mockTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
@@ -84,11 +101,26 @@ func (t *mockTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
 	}
 	return &errRow{err: pgx.ErrNoRows}
 }
-func (t *mockTx) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
+func (t *mockTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	t.querySQL = append(t.querySQL, sql)
+	t.queryArgs = append(t.queryArgs, args)
+	if t.queryFn != nil {
+		return t.queryFn()
+	}
 	return &emptyRows{}, nil
 }
-func (t *mockTx) Commit(_ context.Context) error   { return t.commitErr }
-func (t *mockTx) Rollback(_ context.Context) error { return nil }
+func (t *mockTx) Commit(_ context.Context) error {
+	if t.commitErr == nil {
+		t.committed = true
+	}
+	return t.commitErr
+}
+func (t *mockTx) Rollback(_ context.Context) error {
+	if !t.committed {
+		t.rolledBack = true
+	}
+	return nil
+}
 
 // Satisfy remaining pgx.Tx interface methods (unused in handler code).
 func (t *mockTx) Begin(_ context.Context) (pgx.Tx, error) { return nil, nil }
@@ -113,6 +145,9 @@ type mockDB struct {
 	execErr    error
 	beginErr   error
 	tx         *mockTx
+
+	mu          sync.Mutex
+	queryRowSQL []string // recorded QueryRow statements
 }
 
 func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) {
@@ -122,7 +157,10 @@ func (m *mockDB) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) 
 	return &emptyRows{}, nil
 }
 
-func (m *mockDB) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
+func (m *mockDB) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
+	m.mu.Lock()
+	m.queryRowSQL = append(m.queryRowSQL, sql)
+	m.mu.Unlock()
 	if m.queryRowFn != nil {
 		return m.queryRowFn()
 	}
@@ -529,7 +567,7 @@ func TestUpdate_NotFound(t *testing.T) {
 }
 
 func TestUpdate_Success(t *testing.T) {
-	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1"), queryRowFn: countsRow(2, 0)}
 	h := newHandler(&mockDB{tx: tx})
 	body := `{"status":"pending_approval","standard_ids":["std-1","std-2"]}`
 	req := routeWithID(
@@ -721,21 +759,6 @@ func TestBulkApprove_BadJSON(t *testing.T) {
 	}
 }
 
-func TestBulkApprove_Success(t *testing.T) {
-	h := newHandler(&mockDB{execTag: pgconn.NewCommandTag("UPDATE 2")})
-	req := withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/bulk/approve", strings.NewReader(`{"ids":["a","b"]}`)), "supervisor")
-	w := httptest.NewRecorder()
-	h.BulkApprove(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
-	}
-	var resp map[string]int
-	json.NewDecoder(w.Body).Decode(&resp) //nolint:errcheck
-	if resp["approved"] != 2 {
-		t.Errorf("expected approved=2, got %d", resp["approved"])
-	}
-}
-
 // ---------------------------------------------------------------------------
 // BulkDelete
 // ---------------------------------------------------------------------------
@@ -844,7 +867,7 @@ func TestUpdate_LockedRecordReturns409(t *testing.T) {
 }
 
 func TestUpdate_OmittedStandardsAreKept(t *testing.T) {
-	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1"), queryRowFn: countsRow(1, 0)}
 	rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"status":"pending_approval"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -913,5 +936,424 @@ func TestCreate_IDOwnedByOtherTenantReturns409(t *testing.T) {
 	}
 	if tx.execCalls != 0 {
 		t.Errorf("other tenant's record must not be modified, got %d exec calls", tx.execCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Row helpers for multi-column results
+// ---------------------------------------------------------------------------
+
+// valsRow scans fixed values into string, int64 (from int) and time destinations.
+type valsRow []any
+
+func (r valsRow) Scan(dests ...any) error {
+	if len(dests) != len(r) {
+		return fmt.Errorf("valsRow: %d dests for %d values", len(dests), len(r))
+	}
+	for i, d := range dests {
+		switch p := d.(type) {
+		case *string:
+			*p = r[i].(string)
+		case *int64:
+			*p = int64(r[i].(int))
+		case *time.Time:
+			*p = r[i].(time.Time)
+		default:
+			return fmt.Errorf("valsRow: unsupported destination %T", d)
+		}
+	}
+	return nil
+}
+
+// countsRow is the (total, blank) result of the measurement readiness check.
+func countsRow(total, blank int) func() pgx.Row {
+	return func() pgx.Row { return valsRow{total, blank} }
+}
+
+// sliceRows is a pgx.Rows over fixed rows.
+type sliceRows struct {
+	emptyRows
+	rows []valsRow
+	i    int
+}
+
+func (s *sliceRows) Next() bool { s.i++; return s.i <= len(s.rows) }
+func (s *sliceRows) Scan(dests ...any) error {
+	return s.rows[s.i-1].Scan(dests...)
+}
+
+// seqQueries returns the given result sets for successive Query calls.
+func seqQueries(sets ...[]valsRow) func() (pgx.Rows, error) {
+	i := 0
+	return func() (pgx.Rows, error) {
+		set := sets[i]
+		i++
+		return &sliceRows{rows: set}, nil
+	}
+}
+
+// recordEmails replaces the certificate emailer for one test. Each call
+// reports the record id and whether the transaction had committed by then.
+type sentEmail struct {
+	recordID  string
+	committed bool
+}
+
+func recordEmails(t *testing.T, tx *mockTx) chan sentEmail {
+	t.Helper()
+	ch := make(chan sentEmail, 10)
+	prev := certificateEmailer
+	certificateEmailer = func(_ querier, _ context.Context, recordID, _ string) {
+		ch <- sentEmail{recordID: recordID, committed: tx.committed}
+	}
+	t.Cleanup(func() { certificateEmailer = prev })
+	return ch
+}
+
+// collectEmails waits briefly for n background emails, then checks no more arrive.
+func collectEmails(t *testing.T, ch chan sentEmail, n int) []sentEmail {
+	t.Helper()
+	var got []sentEmail
+	timeout := time.After(time.Second)
+	for len(got) < n {
+		select {
+		case e := <-ch:
+			got = append(got, e)
+		case <-timeout:
+			t.Fatalf("expected %d certificate emails, got %d", n, len(got))
+		}
+	}
+	select {
+	case e := <-ch:
+		t.Fatalf("unexpected extra certificate email for %s", e.recordID)
+	case <-time.After(50 * time.Millisecond):
+	}
+	return got
+}
+
+func errorMessage(rec *httptest.ResponseRecorder) string {
+	var resp map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	msg, _ := resp["error"].(string)
+	return msg
+}
+
+func approveAs(h *Handler, role, userID string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, "/calibrations/rec-1/approve", strings.NewReader(`{"supervisor_signature":"sig"}`))
+	ctx := middleware.WithTenantID(r.Context(), "tenant-1")
+	ctx = middleware.WithUserID(ctx, userID)
+	ctx = middleware.WithRole(ctx, role)
+	req := routeWithID(r.WithContext(ctx), "rec-1")
+	rec := httptest.NewRecorder()
+	h.Approve(rec, req)
+	return rec
+}
+
+func bulkApproveAs(h *Handler, role, userID, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, "/calibrations/bulk/approve", strings.NewReader(body))
+	ctx := middleware.WithTenantID(r.Context(), "tenant-1")
+	ctx = middleware.WithUserID(ctx, userID)
+	ctx = middleware.WithRole(ctx, role)
+	rec := httptest.NewRecorder()
+	h.BulkApprove(rec, r.WithContext(ctx))
+	return rec
+}
+
+var performed = time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+
+// ---------------------------------------------------------------------------
+// 1. Reject only touches pending records
+// ---------------------------------------------------------------------------
+
+func TestReject_ApprovedRecordReturns409(t *testing.T) {
+	db := &mockDB{queryRowFn: seqRows(&errRow{err: pgx.ErrNoRows}, idRow{val: "approved"})}
+	h := newHandler(db)
+	req := routeWithID(withTenantUserAndRole(httptest.NewRequest(http.MethodPost, "/calibrations/abc/reject", strings.NewReader(`{"rejection_reason":"late"}`)), "supervisor"), "abc")
+	w := httptest.NewRecorder()
+	h.Reject(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", w.Code)
+	}
+	if msg := errorMessage(w); msg != "calibration is approved and cannot be rejected" {
+		t.Errorf("unexpected message %q", msg)
+	}
+	if !strings.Contains(db.queryRowSQL[0], "status = 'pending_approval'") {
+		t.Errorf("reject UPDATE must be guarded by status = 'pending_approval':\n%s", db.queryRowSQL[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 2. No submitting or approving without readings
+// ---------------------------------------------------------------------------
+
+func TestUpdate_SubmitWithoutReadingsRejected(t *testing.T) {
+	cases := []struct {
+		name         string
+		total, blank int
+		want         string
+	}{
+		{"no measurements", 0, 0, "cannot submit for approval: no measurements recorded"},
+		{"one blank", 3, 1, "cannot submit for approval: 1 reading is blank"},
+		{"several blank", 3, 2, "cannot submit for approval: 2 readings are blank"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1"), queryRowFn: countsRow(tc.total, tc.blank)}
+			rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"status":"pending_approval","measurements":[]}`)
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d", rec.Code)
+			}
+			if msg := errorMessage(rec); msg != tc.want {
+				t.Errorf("expected %q, got %q", tc.want, msg)
+			}
+			if tx.committed || !tx.rolledBack {
+				t.Errorf("expected rollback (committed=%v rolledBack=%v)", tx.committed, tx.rolledBack)
+			}
+		})
+	}
+}
+
+func TestUpdate_InProgressSaveSkipsReadingCheck(t *testing.T) {
+	// A draft save may have no readings yet; only submission is gated.
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1"), queryRowFn: countsRow(0, 0)}
+	rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"status":"in_progress","measurements":[]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !tx.committed {
+		t.Error("expected commit")
+	}
+}
+
+func TestApprove_WithoutReadingsRejected(t *testing.T) {
+	tx := &mockTx{queryRowFn: seqRows(valsRow{"pending_approval", "tech-1"}, valsRow{0, 0})}
+	emails := recordEmails(t, tx)
+	rec := approveAs(newHandler(&mockDB{tx: tx}), "supervisor", "sup-1")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", rec.Code)
+	}
+	if msg := errorMessage(rec); msg != "cannot approve: no measurements recorded" {
+		t.Errorf("unexpected message %q", msg)
+	}
+	if tx.committed || tx.execCalls != 0 {
+		t.Errorf("nothing may be written (committed=%v execs=%d)", tx.committed, tx.execCalls)
+	}
+	collectEmails(t, emails, 0)
+}
+
+// ---------------------------------------------------------------------------
+// 5. Approve is atomic; the email goes out after commit
+// ---------------------------------------------------------------------------
+
+func approvableTx() *mockTx {
+	return &mockTx{
+		execTag: pgconn.NewCommandTag("UPDATE 1"),
+		queryRowFn: seqRows(
+			valsRow{"pending_approval", "tech-1"},  // lock + lookup
+			valsRow{4, 0},                          // readings
+			valsRow{"rec-1", "asset-1", performed}, // UPDATE ... RETURNING
+		),
+	}
+}
+
+func TestApprove_UpdatesAssetInSameTransactionThenEmails(t *testing.T) {
+	tx := approvableTx()
+	emails := recordEmails(t, tx)
+	rec := approveAs(newHandler(&mockDB{tx: tx}), "supervisor", "sup-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if tx.execCalls != 1 || !strings.Contains(tx.execSQL[0], "UPDATE assets") {
+		t.Fatalf("expected the asset dates update inside the transaction, got %v", tx.execSQL)
+	}
+	if !reflect.DeepEqual(tx.execArgs[0], []any{"asset-1", performed}) {
+		t.Errorf("unexpected asset update args %v", tx.execArgs[0])
+	}
+	if !tx.committed {
+		t.Error("expected commit")
+	}
+	got := collectEmails(t, emails, 1)
+	if got[0].recordID != "rec-1" || !got[0].committed {
+		t.Errorf("email must be sent for rec-1 after commit, got %+v", got[0])
+	}
+}
+
+func TestApprove_AssetUpdateFailureRollsBack(t *testing.T) {
+	tx := approvableTx()
+	tx.execFn = func(string) (pgconn.CommandTag, error) { return pgconn.CommandTag{}, fmt.Errorf("asset locked") }
+	emails := recordEmails(t, tx)
+	rec := approveAs(newHandler(&mockDB{tx: tx}), "supervisor", "sup-1")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Errorf("expected rollback so the record stays pending (committed=%v rolledBack=%v)", tx.committed, tx.rolledBack)
+	}
+	collectEmails(t, emails, 0)
+}
+
+// ---------------------------------------------------------------------------
+// 7. No self-approval for supervisors
+// ---------------------------------------------------------------------------
+
+func TestApprove_SupervisorCannotSelfApprove(t *testing.T) {
+	tx := approvableTx()
+	emails := recordEmails(t, tx)
+	rec := approveAs(newHandler(&mockDB{tx: tx}), "supervisor", "tech-1")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	if msg := errorMessage(rec); msg != "you cannot approve your own calibration" {
+		t.Errorf("unexpected message %q", msg)
+	}
+	if tx.committed {
+		t.Error("nothing may be committed")
+	}
+	collectEmails(t, emails, 0)
+}
+
+func TestApprove_AdminCanSelfApprove(t *testing.T) {
+	tx := approvableTx()
+	emails := recordEmails(t, tx)
+	rec := approveAs(newHandler(&mockDB{tx: tx}), "admin", "tech-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	collectEmails(t, emails, 1)
+}
+
+// ---------------------------------------------------------------------------
+// 2, 3, 7. BulkApprove: readiness, asset dates, emails, self-approval
+// ---------------------------------------------------------------------------
+
+type bulkResp struct {
+	Approved int      `json:"approved"`
+	Skipped  []string `json:"skipped"`
+}
+
+func TestBulkApprove_ApprovesOnlyReadyRecords(t *testing.T) {
+	tx := &mockTx{
+		execTag: pgconn.NewCommandTag("UPDATE 1"),
+		queryFn: seqQueries(
+			[]valsRow{ // pending candidates: id, technician, total, blank
+				{"a", "tech-1", 2, 0}, // ready
+				{"b", "tech-1", 0, 0}, // no measurements
+				{"c", "sup-1", 3, 0},  // supervisor's own record
+				{"e", "tech-2", 3, 1}, // a blank reading
+			},
+			[]valsRow{{"a", "asset-a", performed}}, // UPDATE ... RETURNING
+		),
+	}
+	emails := recordEmails(t, tx)
+	rec := bulkApproveAs(newHandler(&mockDB{tx: tx}), "supervisor", "sup-1", `{"ids":["a","b","c","d","e"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp bulkResp
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if resp.Approved != 1 || !reflect.DeepEqual(resp.Skipped, []string{"b", "c", "d", "e"}) {
+		t.Errorf("unexpected response %+v", resp)
+	}
+	if got := tx.queryArgs[1][0]; !reflect.DeepEqual(got, []string{"a"}) {
+		t.Errorf("only ready records may be approved, UPDATE got ids %v", got)
+	}
+	if tx.execCalls != 1 || !reflect.DeepEqual(tx.execArgs[0], []any{"asset-a", performed}) {
+		t.Errorf("expected one asset dates update for asset-a, got %v", tx.execArgs)
+	}
+	if !tx.committed {
+		t.Error("expected commit")
+	}
+	got := collectEmails(t, emails, 1)
+	if got[0].recordID != "a" || !got[0].committed {
+		t.Errorf("expected email for a after commit, got %+v", got[0])
+	}
+}
+
+func TestBulkApprove_AdminMaySelfApprove(t *testing.T) {
+	tx := &mockTx{
+		execTag: pgconn.NewCommandTag("UPDATE 1"),
+		queryFn: seqQueries(
+			[]valsRow{{"a", "admin-1", 1, 0}, {"b", "tech-1", 1, 0}},
+			[]valsRow{{"a", "asset-a", performed}, {"b", "asset-b", performed}},
+		),
+	}
+	emails := recordEmails(t, tx)
+	rec := bulkApproveAs(newHandler(&mockDB{tx: tx}), "admin", "admin-1", `{"ids":["a","b"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp bulkResp
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if resp.Approved != 2 || len(resp.Skipped) != 0 {
+		t.Errorf("unexpected response %+v", resp)
+	}
+	if tx.execCalls != 2 {
+		t.Errorf("expected 2 asset updates, got %d", tx.execCalls)
+	}
+	collectEmails(t, emails, 2)
+}
+
+func TestBulkApprove_AssetUpdateFailureRollsBack(t *testing.T) {
+	tx := &mockTx{
+		execFn: func(string) (pgconn.CommandTag, error) { return pgconn.CommandTag{}, fmt.Errorf("boom") },
+		queryFn: seqQueries(
+			[]valsRow{{"a", "tech-1", 1, 0}},
+			[]valsRow{{"a", "asset-a", performed}},
+		),
+	}
+	emails := recordEmails(t, tx)
+	rec := bulkApproveAs(newHandler(&mockDB{tx: tx}), "supervisor", "sup-1", `{"ids":["a"]}`)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Error("expected rollback")
+	}
+	collectEmails(t, emails, 0)
+}
+
+func TestBulkApprove_NothingReady(t *testing.T) {
+	tx := &mockTx{queryFn: seqQueries([]valsRow{{"a", "tech-1", 0, 0}})}
+	rec := bulkApproveAs(newHandler(&mockDB{tx: tx}), "supervisor", "sup-1", `{"ids":["a"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp bulkResp
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if resp.Approved != 0 || !reflect.DeepEqual(resp.Skipped, []string{"a"}) {
+		t.Errorf("unexpected response %+v", resp)
+	}
+	if len(tx.querySQL) != 1 || tx.execCalls != 0 {
+		t.Errorf("no approval UPDATE expected, got %d queries and %d execs", len(tx.querySQL), tx.execCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 6. Optional text fields: omitted keeps, "" clears
+// ---------------------------------------------------------------------------
+
+func TestUpdate_TextFieldsOmittedKeepEmptyClears(t *testing.T) {
+	tx := &mockTx{execTag: pgconn.NewCommandTag("UPDATE 1")}
+	rec := putCalibration(newHandler(&mockDB{tx: tx}), `{"notes":"","flag_number":"F-9","tech_signature":null}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !strings.Contains(tx.execSQL[0], "notes = COALESCE($7::text, notes)") {
+		t.Errorf("notes must be set from a nullable parameter:\n%s", tx.execSQL[0])
+	}
+	// args: id, tenant, status, tech_signature, sales_number, flag_number, notes, local_id
+	args := tx.execArgs[0]
+	str := func(i int) *string { return args[i].(*string) }
+	if str(3) != nil {
+		t.Errorf("null tech_signature must keep the column (nil arg), got %q", *str(3))
+	}
+	if str(4) != nil {
+		t.Errorf("omitted sales_number must keep the column (nil arg), got %q", *str(4))
+	}
+	if str(5) == nil || *str(5) != "F-9" {
+		t.Errorf("flag_number must be set to F-9, got %v", str(5))
+	}
+	if str(6) == nil || *str(6) != "" {
+		t.Errorf(`notes "" must clear the column, got %v`, str(6))
 	}
 }

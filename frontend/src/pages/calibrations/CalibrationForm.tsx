@@ -51,6 +51,21 @@ import BackflowTemplate, {
   type BackflowRow,
   type BackflowConditions,
 } from './templates/BackflowTemplate'
+import PressureGaugeTemplate, {
+  buildDefaultGaugePoints,
+  gaugeRange,
+  gaugeAccuracy,
+  gaugeMeasurements,
+  gaugePointsFromTemplate,
+  gaugePointsFromMeasurements,
+  gaugeAccuracyFromMeasurements,
+  isPressureGaugeMeasurements,
+  emptyGaugeConditions,
+  composeGaugeNotes,
+  parseGaugeNotes,
+  type GaugePoint,
+  type GaugeConditions,
+} from './templates/PressureGaugeTemplate'
 
 // ---------------------------------------------------------------------------
 // Toast — minimal local implementation
@@ -353,12 +368,20 @@ export default function CalibrationForm() {
   const [transmitterRows, setTransmitterRows] = useState<TransmitterRow[]>([])
   const [backflowRows, setBackflowRows] = useState<BackflowRow[]>(buildDefaultBackflowRows())
   const [backflowConditions, setBackflowConditions] = useState<BackflowConditions>(emptyBackflowConditions())
+  // Pressure uses the rising/falling gauge sheet; records saved by the older
+  // 5-point sheet (no ↑/↓ labels) stay on it (pressureLegacy).
+  const [gaugePoints, setGaugePoints] = useState<GaugePoint[]>([])
+  const [gaugeConditions, setGaugeConditions] = useState<GaugeConditions>(emptyGaugeConditions())
+  const [pressureLegacy, setPressureLegacy] = useState(false)
 
   const [selectedStandardIds, setSelectedStandardIds] = useState<string[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [appliedTemplate, setAppliedTemplate] = useState<CalibrationTemplate | null>(null)
+  // A record past in_progress (submitted, approved, rejected) is locked; the
+  // As Found → As Left shortcuts are hidden so readings aren't bulk-rewritten.
+  const [locked, setLocked] = useState(false)
 
   // Stable IDs — reuse existing if editing, generate new if creating
   const [localId] = useState(() => existingRecordId ?? crypto.randomUUID())
@@ -390,17 +413,23 @@ export default function CalibrationForm() {
       if (a) {
         setPressureRows(buildDefaultPressureRows(a))
         setTransmitterRows(buildDefaultTransmitterRows(a))
+        setGaugePoints(buildDefaultGaugePoints(gaugeRange(a)))
       }
 
       if (existingRecordId) {
         // Load existing record header fields — Dexie first, fall back to Supabase
         const rec = await db.calibration_records.get(existingRecordId)
         if (rec) {
+          setLocked(rec.status !== 'in_progress')
           setSalesNumber(rec.sales_number ?? '')
           setFlagNumber(rec.flag_number ?? '')
           if (a?.instrument_type === 'backflow_test_kit') {
             const parsed = parseBackflowNotes(rec.notes ?? '')
             setBackflowConditions(parsed.conditions)
+            setNotes(parsed.freeNotes)
+          } else if (a?.instrument_type === 'pressure') {
+            const parsed = parseGaugeNotes(rec.notes ?? '')
+            setGaugeConditions(parsed.conditions)
             setNotes(parsed.freeNotes)
           } else {
             setNotes(rec.notes ?? '')
@@ -442,7 +471,13 @@ export default function CalibrationForm() {
         }
         if (measurements.length > 0 && a) {
           const type = a.instrument_type?.toLowerCase() ?? ''
-          if (type === 'pressure') {
+          if (type === 'pressure' && isPressureGaugeMeasurements(measurements)) {
+            setGaugePoints(gaugePointsFromMeasurements(measurements, gaugeRange(a)))
+            const acc = gaugeAccuracyFromMeasurements(measurements)
+            // Untagged notes (edited elsewhere): fall back to the class saved on the rows.
+            if (acc) setGaugeConditions(prev => (prev.accuracyPct === emptyGaugeConditions().accuracyPct ? { ...prev, accuracyPct: acc } : prev))
+          } else if (type === 'pressure') {
+            setPressureLegacy(true)
             setPressureRows(measurements.map(m => ({
               pct: m.standard_value ?? 0,
               standardValue: m.standard_value ?? 0,
@@ -518,7 +553,8 @@ export default function CalibrationForm() {
     if (!asset) return []
     const type = asset.instrument_type ?? ''
     let raw: LocalMeasurement[] = []
-    if (type === 'pressure') raw = pressureMeasurements(recordId, pressureRows, asset)
+    if (type === 'pressure' && pressureLegacy) raw = pressureMeasurements(recordId, pressureRows, asset)
+    else if (type === 'pressure') raw = gaugeMeasurements(recordId, gaugePoints, gaugeRange(asset), gaugeAccuracy(gaugeConditions))
     else if (type === 'temperature') raw = temperatureMeasurements(recordId, temperatureRows)
     else if (type === 'ph_conductivity') raw = phMeasurements(recordId, phData)
     else if (type === 'conductivity') raw = conductivityMeasurements(recordId, conductivityData)
@@ -539,7 +575,7 @@ export default function CalibrationForm() {
       if (!idMap.has(m.point_label)) idMap.set(m.point_label, crypto.randomUUID())
       return { ...m, id: idMap.get(m.point_label)! }
     })
-  }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, backflowRows, recordId])
+  }, [asset, pressureRows, temperatureRows, phData, conductivityData, levelRows, transmitterRows, switchData, backflowRows, gaugePoints, gaugeConditions, pressureLegacy, recordId])
 
   const result = useMemo(() => {
     if (!asset) return 'INCOMPLETE' as const
@@ -553,7 +589,11 @@ export default function CalibrationForm() {
     // Pre-fill measurement rows from the template's points
     const type = asset?.instrument_type?.toLowerCase() ?? ''
 
-    if (type === 'pressure') {
+    if (type === 'pressure' && !pressureLegacy) {
+      const points = gaugePointsFromTemplate(template, gaugeRange(asset))
+      if (points.length > 0) setGaugePoints(points)
+      if (template.tolerance_pct != null) setGaugeConditions(prev => ({ ...prev, accuracyPct: String(template.tolerance_pct) }))
+    } else if (type === 'pressure') {
       setPressureRows(
         template.points.map((p, i) => ({
           pct: p.standard_value ?? i * 25,
@@ -638,7 +678,9 @@ export default function CalibrationForm() {
         flag_number: flagNumber || undefined,
         notes: (asset.instrument_type === 'backflow_test_kit'
           ? composeBackflowNotes(backflowConditions, notes)
-          : notes) || undefined,
+          : asset.instrument_type === 'pressure' && !pressureLegacy
+            ? composeGaugeNotes(gaugeConditions, notes)
+            : notes) || undefined,
         tech_signature: techSignature || undefined,
       }
 
@@ -814,8 +856,19 @@ export default function CalibrationForm() {
           Measurements
         </h2>
 
-        {typeLower === 'pressure' && (
-          <PressureTemplate asset={asset} rows={pressureRows} onChange={setPressureRows} showUncertainty />
+        {typeLower === 'pressure' && !pressureLegacy && (
+          <PressureGaugeTemplate
+            asset={asset}
+            points={gaugePoints}
+            onChange={setGaugePoints}
+            conditions={gaugeConditions}
+            onConditionsChange={setGaugeConditions}
+            readOnly={locked}
+          />
+        )}
+
+        {typeLower === 'pressure' && pressureLegacy && (
+          <PressureTemplate asset={asset} rows={pressureRows} onChange={setPressureRows} showUncertainty readOnly={locked} />
         )}
 
         {typeLower === 'temperature' && (
@@ -835,7 +888,7 @@ export default function CalibrationForm() {
         )}
 
         {isTransmitter && (
-          <TransmitterTemplate asset={asset} rows={transmitterRows} onChange={setTransmitterRows} />
+          <TransmitterTemplate asset={asset} rows={transmitterRows} onChange={setTransmitterRows} readOnly={locked} />
         )}
 
         {typeLower === 'backflow_test_kit' && (
@@ -844,11 +897,12 @@ export default function CalibrationForm() {
             onChange={setBackflowRows}
             conditions={backflowConditions}
             onConditionsChange={setBackflowConditions}
+            readOnly={locked}
           />
         )}
 
         {isSwitch && (
-          <SwitchTemplate asset={asset} data={switchData} onChange={setSwitchData} />
+          <SwitchTemplate asset={asset} data={switchData} onChange={setSwitchData} readOnly={locked} />
         )}
 
         {typeLower === 'other' && (

@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -41,14 +43,109 @@ type jwksKey struct {
 	Use string `json:"use"`
 }
 
-// fetchECPublicKey fetches the first EC signing key from a Supabase JWKS endpoint.
-func fetchECPublicKey(supabaseURL string) (*ecdsa.PublicKey, error) {
-	jwksURL := strings.TrimRight(supabaseURL, "/") + "/auth/v1/.well-known/jwks.json"
-	resp, err := http.Get(jwksURL)
+// jwksMinRefresh is the shortest interval between two JWKS fetches, so a flood
+// of tokens with unknown key ids cannot turn into a flood of requests.
+const jwksMinRefresh = time.Minute
+
+// ecKeySource resolves the EC public key for a token's kid header.
+type ecKeySource interface {
+	key(kid string) (*ecdsa.PublicKey, error)
+}
+
+// jwksCache holds the Supabase JWKS signing keys by kid. A token whose kid is
+// not cached triggers a refetch (key rotation), at most once per minRefresh.
+// Safe for concurrent use.
+type jwksCache struct {
+	url        string
+	client     *http.Client
+	minRefresh time.Duration
+	now        func() time.Time
+
+	fetchMu sync.Mutex // serialises fetches
+
+	mu        sync.RWMutex // guards keys and lastFetch
+	keys      map[string]*ecdsa.PublicKey
+	lastFetch time.Time
+}
+
+func newJWKSCache(supabaseURL string) *jwksCache {
+	return &jwksCache{
+		url:        strings.TrimRight(supabaseURL, "/") + "/auth/v1/.well-known/jwks.json",
+		client:     &http.Client{Timeout: 10 * time.Second},
+		minRefresh: jwksMinRefresh,
+		now:        time.Now,
+	}
+}
+
+// lookup returns the cached key for kid. An empty kid matches only when the
+// set holds exactly one key, which is what a single-key JWKS without kids means.
+func (c *jwksCache) lookup(kid string) *ecdsa.PublicKey {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if kid == "" {
+		if len(c.keys) == 1 {
+			for _, k := range c.keys {
+				return k
+			}
+		}
+		return nil
+	}
+	return c.keys[kid]
+}
+
+func (c *jwksCache) key(kid string) (*ecdsa.PublicKey, error) {
+	if k := c.lookup(kid); k != nil {
+		return k, nil
+	}
+
+	c.fetchMu.Lock()
+	defer c.fetchMu.Unlock()
+	// Another request may have refreshed while this one waited.
+	if k := c.lookup(kid); k != nil {
+		return k, nil
+	}
+	c.mu.RLock()
+	last := c.lastFetch
+	c.mu.RUnlock()
+	if !last.IsZero() && c.now().Sub(last) < c.minRefresh {
+		return nil, fmt.Errorf("unknown JWKS key id %q", kid)
+	}
+	if err := c.refresh(); err != nil {
+		return nil, err
+	}
+	if k := c.lookup(kid); k != nil {
+		return k, nil
+	}
+	return nil, fmt.Errorf("unknown JWKS key id %q", kid)
+}
+
+// refresh fetches the JWKS and replaces the cached keys. A failed fetch keeps
+// the previous keys but still counts toward the rate limit.
+func (c *jwksCache) refresh() error {
+	c.mu.Lock()
+	c.lastFetch = c.now()
+	c.mu.Unlock()
+
+	keys, err := fetchECPublicKeys(c.client, c.url)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.keys = keys
+	c.mu.Unlock()
+	return nil
+}
+
+// fetchECPublicKeys fetches the P-256 signing keys from a JWKS endpoint, keyed by kid.
+func fetchECPublicKeys(client *http.Client, jwksURL string) (map[string]*ecdsa.PublicKey, error) {
+	resp, err := client.Get(jwksURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetching JWKS: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetching JWKS: status %d", resp.StatusCode)
+	}
 
 	var body struct {
 		Keys []jwksKey `json:"keys"`
@@ -57,36 +154,43 @@ func fetchECPublicKey(supabaseURL string) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("decoding JWKS: %w", err)
 	}
 
+	keys := make(map[string]*ecdsa.PublicKey)
 	for _, k := range body.Keys {
-		if k.Kty == "EC" && k.Use == "sig" {
-			xBytes, err := base64.RawURLEncoding.DecodeString(k.X)
-			if err != nil {
-				continue
-			}
-			yBytes, err := base64.RawURLEncoding.DecodeString(k.Y)
-			if err != nil {
-				continue
-			}
-			return &ecdsa.PublicKey{
-				Curve: elliptic.P256(),
-				X:     new(big.Int).SetBytes(xBytes),
-				Y:     new(big.Int).SetBytes(yBytes),
-			}, nil
+		if k.Kty != "EC" || (k.Use != "" && k.Use != "sig") || (k.Crv != "" && k.Crv != "P-256") {
+			continue
 		}
+		xBytes, err := base64.RawURLEncoding.DecodeString(k.X)
+		if err != nil {
+			continue
+		}
+		yBytes, err := base64.RawURLEncoding.DecodeString(k.Y)
+		if err != nil {
+			continue
+		}
+		x, y := new(big.Int).SetBytes(xBytes), new(big.Int).SetBytes(yBytes)
+		if !elliptic.P256().IsOnCurve(x, y) {
+			continue
+		}
+		keys[k.Kid] = &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
 	}
-	return nil, fmt.Errorf("no EC signing key found in JWKS response")
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no EC signing key found in JWKS response")
+	}
+	return keys, nil
 }
 
-// validateToken parses and validates a raw JWT string using ES256 (preferred)
-// or HS256 (fallback). Returns the verified MapClaims or an error.
-func validateToken(tokenString string, ecKey *ecdsa.PublicKey, hmacSecret []byte) (jwt.MapClaims, error) {
+// validateToken parses and validates a raw JWT string using ES256 (preferred,
+// key chosen by the token's kid) or HS256 (fallback). Returns the verified
+// MapClaims or an error.
+func validateToken(tokenString string, ecKeys ecKeySource, hmacSecret []byte) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 		switch t.Method.(type) {
 		case *jwt.SigningMethodECDSA:
-			if ecKey == nil {
+			if ecKeys == nil {
 				return nil, fmt.Errorf("ES256 token but no EC public key loaded")
 			}
-			return ecKey, nil
+			kid, _ := t.Header["kid"].(string)
+			return ecKeys.key(kid)
 		case *jwt.SigningMethodHMAC:
 			return hmacSecret, nil
 		default:
@@ -106,17 +210,18 @@ func validateToken(tokenString string, ecKey *ecdsa.PublicKey, hmacSecret []byte
 // Auth returns a Chi middleware that validates Supabase-issued JWTs and injects
 // userID, tenantID, and role into the request context.
 func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
-	// Try ES256 first (Supabase now uses asymmetric signing by default).
-	var ecKey *ecdsa.PublicKey
+	// Try ES256 first (Supabase now uses asymmetric signing by default). Keys
+	// are cached by kid and refetched when a token names an unknown one.
+	var ecKeys ecKeySource
 	supabaseURL := os.Getenv("SUPABASE_URL")
 	if supabaseURL != "" {
-		var err error
-		ecKey, err = fetchECPublicKey(supabaseURL)
-		if err != nil {
-			slog.Warn("could not fetch JWKS, falling back to HMAC", "error", err)
+		cache := newJWKSCache(supabaseURL)
+		if err := cache.refresh(); err != nil {
+			slog.Warn("could not fetch JWKS, will retry on first ES256 token; HMAC still accepted", "error", err)
 		} else {
-			slog.Info("loaded ES256 public key from Supabase JWKS")
+			slog.Info("loaded ES256 public keys from Supabase JWKS")
 		}
+		ecKeys = cache
 	}
 
 	// HS256 fallback — raw secret string (not base64-decoded).
@@ -138,7 +243,7 @@ func Auth(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 
 			tokenString := parts[1]
 
-			claims, err := validateToken(tokenString, ecKey, hmacSecret)
+			claims, err := validateToken(tokenString, ecKeys, hmacSecret)
 			if err != nil {
 				slog.Warn("JWT validation failed", "error", err)
 				writeAuthError(w, "invalid or expired token")

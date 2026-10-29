@@ -2,6 +2,8 @@
 import { CheckCircle, XCircle } from 'lucide-react'
 import type { LocalMeasurement } from '../../../lib/db'
 import type { TemplatePoint } from '../../../types'
+import { copyAllAsFound, copyAsFoundAt, hasReading } from '../../../utils/copyAsFound'
+import { CopyAllAsFoundButton, CopyRowAsFoundButton } from '../../../components/calibrations/CopyAsFound'
 
 // ---------------------------------------------------------------------------
 // Backflow test kit sheet (e.g. Zurn TG-5, procedure CP.13).
@@ -186,6 +188,8 @@ interface BackflowTemplateProps {
   onChange: (rows: BackflowRow[]) => void
   conditions: BackflowConditions
   onConditionsChange: (c: BackflowConditions) => void
+  /** Locked record: hides the As Found → As Left copy controls. */
+  readOnly?: boolean
 }
 
 const inputClass =
@@ -202,6 +206,7 @@ export default function BackflowTemplate({
   onChange,
   conditions,
   onConditionsChange,
+  readOnly = false,
 }: BackflowTemplateProps) {
   function handleChange(index: number, field: 'asFound' | 'asLeft', value: string) {
     onChange(rows.map((row, i) => (i === index ? { ...row, [field]: value } : row)))
@@ -257,9 +262,17 @@ export default function BackflowTemplate({
         />
       </div>
 
-      <p className="text-sm text-gray-500">
-        Set the UUT to each nominal (descending) and record the reference standard reading.
-      </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-gray-500">
+          Set the UUT to each nominal (descending) and record the reference standard reading.
+        </p>
+        {!readOnly && (
+          <CopyAllAsFoundButton
+            disabled={!rows.some((r) => hasReading(r.asFound))}
+            onClick={() => onChange(copyAllAsFound(rows, 'asFound', 'asLeft'))}
+          />
+        )}
+      </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-sm border-collapse">
@@ -298,15 +311,23 @@ export default function BackflowTemplate({
                   </td>
                   <td className="px-3 py-2 text-center"><PassIcon pass={foundPass} /></td>
                   <td className="px-3 py-1">
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      value={row.asLeft}
-                      onChange={(e) => handleChange(i, 'asLeft', e.target.value)}
-                      placeholder="—"
-                      aria-label={`As left at ${row.label}`}
-                      className={inputClass}
-                    />
+                    <div className="flex items-center gap-1">
+                      {!readOnly && (
+                        <CopyRowAsFoundButton
+                          disabled={!hasReading(row.asFound)}
+                          onClick={() => onChange(copyAsFoundAt(rows, i, 'asFound', 'asLeft'))}
+                        />
+                      )}
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={row.asLeft}
+                        onChange={(e) => handleChange(i, 'asLeft', e.target.value)}
+                        placeholder="—"
+                        aria-label={`As left at ${row.label}`}
+                        className={`${inputClass} min-w-[6rem]`}
+                      />
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-center"><PassIcon pass={leftPass} /></td>
                 </tr>

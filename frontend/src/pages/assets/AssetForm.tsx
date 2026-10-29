@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useForm, Controller } from 'react-hook-form'
+import { useForm, useWatch, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ArrowLeft, QrCode, Loader2, AlertCircle, X } from 'lucide-react'
@@ -162,7 +162,6 @@ export default function AssetForm() {
   const { mutateAsync: upsertAsset, isPending: saving } = useUpsertAsset()
 
   const [scannerOpen, setScannerOpen] = useState(false)
-  const [tagDuplicateWarning, setTagDuplicateWarning] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
 
   // Customer linking
@@ -176,7 +175,6 @@ export default function AssetForm() {
     handleSubmit,
     control,
     setValue,
-    watch,
     reset,
     formState: { errors },
   } = useForm<AssetFormValues>({
@@ -201,12 +199,13 @@ export default function AssetForm() {
       })
   }, [tenantId])
 
-  // Sync selectedCustomerId when existing asset loads
-  useEffect(() => {
-    if (existingAsset) {
-      setSelectedCustomerId(existingAsset.customer_id ?? null)
-    }
-  }, [existingAsset])
+  // Sync selectedCustomerId when existing asset loads (adjusted during render,
+  // not in an effect, so there's no extra render pass).
+  const [syncedAsset, setSyncedAsset] = useState(existingAsset)
+  if (existingAsset !== syncedAsset) {
+    setSyncedAsset(existingAsset)
+    if (existingAsset) setSelectedCustomerId(existingAsset.customer_id ?? null)
+  }
 
   // Populate form when editing
   useEffect(() => {
@@ -228,7 +227,7 @@ export default function AssetForm() {
   }, [isEditing, existingAsset, reset])
 
   // Auto-fill unit + range when instrument type changes (new assets only)
-  const watchedInstrumentType = watch('instrument_type')
+  const watchedInstrumentType = useWatch({ control, name: 'instrument_type' })
   useEffect(() => {
     if (isEditing) return
     const defaults = INSTRUMENT_DEFAULTS[watchedInstrumentType]
@@ -239,19 +238,12 @@ export default function AssetForm() {
   }, [watchedInstrumentType, isEditing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Duplicate tag ID check
-  const watchedTagId = watch('tag_id')
-  useEffect(() => {
-    if (!watchedTagId || !allAssets) {
-      setTagDuplicateWarning(false)
-      return
-    }
-    const duplicate = allAssets.some(
-      (a) =>
-        a.tag_id.toLowerCase() === watchedTagId.toLowerCase() &&
-        a.id !== (existingAsset?.id ?? ''),
-    )
-    setTagDuplicateWarning(duplicate)
-  }, [watchedTagId, allAssets, existingAsset])
+  const watchedTagId = useWatch({ control, name: 'tag_id' })
+  const tagDuplicateWarning = !!watchedTagId && !!allAssets && allAssets.some(
+    (a) =>
+      a.tag_id.toLowerCase() === watchedTagId.toLowerCase() &&
+      a.id !== (existingAsset?.id ?? ''),
+  )
 
   const handleQrScan = useCallback(
     (tagId: string) => {

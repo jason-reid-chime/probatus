@@ -481,12 +481,14 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	id := chi.URLParam(r, "id")
 
+	// tech_signature, sales_number, flag_number and notes are pointers so an
+	// omitted (or null) field keeps the stored value while "" clears it.
 	var body struct {
 		Status        string             `json:"status"`
-		TechSignature string             `json:"tech_signature"`
-		SalesNumber   string             `json:"sales_number"`
-		FlagNumber    string             `json:"flag_number"`
-		Notes         string             `json:"notes"`
+		TechSignature *string            `json:"tech_signature"`
+		SalesNumber   *string            `json:"sales_number"`
+		FlagNumber    *string            `json:"flag_number"`
+		Notes         *string            `json:"notes"`
 		LocalID       string             `json:"local_id"`
 		StandardIDs   []string           `json:"standard_ids"`
 		Measurements  []measurementInput `json:"measurements"`
@@ -521,10 +523,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	tag, err := tx.Exec(r.Context(),
 		`UPDATE calibration_records
 		 SET status = CASE WHEN $3::text = '' THEN status ELSE $3::calibration_status END,
-		     tech_signature = COALESCE(NULLIF($4,''), tech_signature),
-		     sales_number = COALESCE(NULLIF($5,''), sales_number),
-		     flag_number = COALESCE(NULLIF($6,''), flag_number),
-		     notes = COALESCE(NULLIF($7,''), notes),
+		     tech_signature = COALESCE($4::text, tech_signature),
+		     sales_number = COALESCE($5::text, sales_number),
+		     flag_number = COALESCE($6::text, flag_number),
+		     notes = COALESCE($7::text, notes),
 		     local_id = COALESCE(NULLIF($8,''), local_id),
 		     updated_at = NOW()
 		 WHERE id = $1 AND tenant_id = $2 AND status IN `+editableStatusesSQL,
@@ -566,6 +568,23 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Only in_progress/rejected records reach this point, so the record ends up
+	// pending_approval exactly when the body asks for it. Checked after the
+	// measurements were replaced, so it sees what will actually be submitted.
+	if body.Status == "pending_approval" {
+		problem, err := measurementProblem(r.Context(), tx, id)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "calibrations.Update: measurement check failed", "record_id", id, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to check measurements")
+			return
+		}
+		if problem != "" {
+			// The deferred Rollback discards the update.
+			writeError(w, http.StatusUnprocessableEntity, "cannot submit for approval: "+problem)
+			return
+		}
+	}
+
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.ErrorContext(r.Context(), "calibrations.Update: commit failed", "record_id", id, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
@@ -575,7 +594,65 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
+// rowQuerier is satisfied by both the pool and a transaction.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// measurementProblem reports why a record's stored readings are not ready for
+// approval: "" when there is at least one measurement and every one has a
+// measured_value, otherwise a short reason for the client.
+func measurementProblem(ctx context.Context, q rowQuerier, recordID string) (string, error) {
+	var total, blank int64
+	if err := q.QueryRow(ctx,
+		`SELECT count(*), count(*) FILTER (WHERE measured_value IS NULL)
+		 FROM calibration_measurements WHERE record_id = $1`,
+		recordID,
+	).Scan(&total, &blank); err != nil {
+		return "", err
+	}
+	return describeMeasurementProblem(total, blank), nil
+}
+
+func describeMeasurementProblem(total, blank int64) string {
+	switch {
+	case total == 0:
+		return "no measurements recorded"
+	case blank == 1:
+		return "1 reading is blank"
+	case blank > 1:
+		return fmt.Sprintf("%d readings are blank", blank)
+	}
+	return ""
+}
+
+// approveRecordSQL marks a pending record approved. Shared by Approve and
+// BulkApprove; $1 is a uuid[] of record ids.
+const approveRecordSQL = `UPDATE calibration_records
+	 SET status = 'approved',
+	     supervisor_id = $3,
+	     approved_at = $4,
+	     supervisor_signature = COALESCE(NULLIF($5,''), supervisor_signature),
+	     updated_at = now()
+	 WHERE id = ANY($1::uuid[]) AND tenant_id = $2 AND status = 'pending_approval'
+	 RETURNING id::text, asset_id::text, performed_at`
+
+// updateAssetDatesSQL moves an asset's calibration dates forward to the
+// approved record's performed_at (never backwards, so approving an older
+// record after a newer one leaves the dates alone).
+const updateAssetDatesSQL = `UPDATE assets
+	 SET last_calibrated_at = $2,
+	     next_due_at = $2::date + (calibration_interval_days || ' days')::interval
+	 WHERE id = $1
+	   AND (last_calibrated_at IS NULL OR last_calibrated_at <= $2)`
+
+// certificateEmailer sends the certificate email for an approved record. It is
+// a variable so tests can observe the calls instead of rendering and mailing.
+var certificateEmailer = sendCertificateEmail
+
 // Approve sets a calibration's status to "approved" and records the supervisor.
+// The record and its asset's calibration dates change in one transaction; the
+// certificate email goes out only after it commits.
 func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	userID := middleware.UserIDFromCtx(r.Context())
@@ -597,22 +674,55 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.Approve: begin transaction failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
 
-	// Approve the record and get the asset_id + performed_at back so we can
-	// update the asset's calibration dates in the same transaction.
-	var assetID string
+	// Lock the record so the checks below still hold when it is approved.
+	var status, technicianID string
+	err = tx.QueryRow(r.Context(),
+		`SELECT status::text, technician_id::text FROM calibration_records
+		 WHERE id = $1 AND tenant_id = $2
+		 FOR UPDATE`,
+		id, tenantID,
+	).Scan(&status, &technicianID)
+	if err == pgx.ErrNoRows || (err == nil && status != "pending_approval") {
+		writeError(w, http.StatusNotFound, "calibration not found or not pending approval")
+		return
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.Approve: lookup failed", "record_id", id, "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to approve calibration")
+		return
+	}
+
+	// Supervisors need a second pair of eyes; an admin may self-approve because
+	// a one-person shop has nobody else to sign off.
+	if role == "supervisor" && technicianID == userID {
+		writeError(w, http.StatusForbidden, "you cannot approve your own calibration")
+		return
+	}
+
+	problem, err := measurementProblem(r.Context(), tx, id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.Approve: measurement check failed", "record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to check measurements")
+		return
+	}
+	if problem != "" {
+		writeError(w, http.StatusUnprocessableEntity, "cannot approve: "+problem)
+		return
+	}
+
+	var approvedID, assetID string
 	var performedAt time.Time
-	err := h.pool.QueryRow(r.Context(),
-		`UPDATE calibration_records
-		 SET status = 'approved',
-		     supervisor_id = $3,
-		     approved_at = $4,
-		     supervisor_signature = COALESCE(NULLIF($5,''), supervisor_signature)
-		 WHERE id = $1 AND tenant_id = $2 AND status = 'pending_approval'
-		 RETURNING asset_id::text, performed_at`,
-		id, tenantID, userID, now, body.SupervisorSignature,
-	).Scan(&assetID, &performedAt)
+	err = tx.QueryRow(r.Context(), approveRecordSQL,
+		[]string{id}, tenantID, userID, time.Now().UTC(), body.SupervisorSignature,
+	).Scan(&approvedID, &assetID, &performedAt)
 	if err == pgx.ErrNoRows {
 		writeError(w, http.StatusNotFound, "calibration not found or not pending approval")
 		return
@@ -623,29 +733,30 @@ func (h *Handler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update asset's last_calibrated_at and next_due_at based on calibration_interval_days.
-	if _, err := h.pool.Exec(r.Context(),
-		`UPDATE assets
-		 SET last_calibrated_at = $2,
-		     next_due_at = $2::date + (calibration_interval_days || ' days')::interval
-		 WHERE id = $1
-		   AND (last_calibrated_at IS NULL OR last_calibrated_at <= $2)`,
-		assetID, performedAt,
-	); err != nil {
-		slog.ErrorContext(r.Context(), "calibrations.Approve: failed to update asset dates", "asset_id", assetID, "error", err)
-		// Non-fatal — approval succeeded; dates will be stale until next approval.
+	if _, err := tx.Exec(r.Context(), updateAssetDatesSQL, assetID, performedAt); err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.Approve: failed to update asset dates", "record_id", id, "asset_id", assetID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to update asset calibration dates")
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.Approve: commit failed", "record_id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
+		return
 	}
 
 	slog.Info("calibrations.Approve: record approved", "record_id", id, "tenant_id", tenantID, "supervisor_id", userID)
 
 	// Fire off the certificate email in the background so the HTTP response is
 	// never delayed or failed due to email delivery issues.
-	go sendCertificateEmail(h.pool, r.Context(), id, tenantID)
+	go certificateEmailer(h.pool, r.Context(), id, tenantID)
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": "approved"})
 }
 
-// Reject sets a calibration's status to "rejected" and records the reason.
+// Reject sets a pending calibration's status to "rejected" and records the
+// reason. Only pending_approval records can be rejected, so an approved
+// certificate never changes.
 func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	role := middleware.RoleFromCtx(r.Context())
@@ -667,7 +778,7 @@ func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
 	row := h.pool.QueryRow(r.Context(),
 		`UPDATE calibration_records
 		 SET status = 'rejected', rejection_reason = $1, updated_at = now()
-		 WHERE id = $2 AND tenant_id = $3
+		 WHERE id = $2 AND tenant_id = $3 AND status = 'pending_approval'
 		 RETURNING id::text, tenant_id::text, asset_id::text, technician_id::text,
 		           supervisor_id::text, status, performed_at, approved_at,
 		           sales_number, flag_number, tech_signature, supervisor_signature,
@@ -683,7 +794,19 @@ func (h *Handler) Reject(w http.ResponseWriter, r *http.Request) {
 		&rec.CertificateURL, &rec.Notes, &rec.LocalID,
 	)
 	if err == pgx.ErrNoRows {
-		writeError(w, http.StatusNotFound, "calibration not found")
+		// Distinguish "no such record" from "record exists in another status".
+		var status string
+		if lookupErr := h.pool.QueryRow(r.Context(),
+			`SELECT status::text FROM calibration_records WHERE id = $1 AND tenant_id = $2`,
+			id, tenantID,
+		).Scan(&status); lookupErr != nil {
+			if lookupErr != pgx.ErrNoRows {
+				slog.ErrorContext(r.Context(), "calibrations.Reject: status lookup failed", "record_id", id, "tenant_id", tenantID, "error", lookupErr)
+			}
+			writeError(w, http.StatusNotFound, "calibration not found")
+			return
+		}
+		writeError(w, http.StatusConflict, fmt.Sprintf("calibration is %s and cannot be rejected", status))
 		return
 	}
 	if err != nil {
@@ -750,7 +873,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// BulkApprove approves multiple calibrations that are in pending_approval status.
+// BulkApprove approves the given calibrations that are ready: pending approval,
+// at least one measurement with no blank readings, and (for supervisors) not
+// their own work. It does what Approve does for each one: asset calibration
+// dates move forward in the same transaction, and a certificate email goes out
+// after commit. The response lists the ids it did not approve under "skipped".
 func (h *Handler) BulkApprove(w http.ResponseWriter, r *http.Request) {
 	tenantID := middleware.TenantIDFromCtx(r.Context())
 	userID := middleware.UserIDFromCtx(r.Context())
@@ -769,25 +896,118 @@ func (h *Handler) BulkApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.IDs) == 0 {
-		writeJSON(w, http.StatusOK, map[string]int{"approved": 0})
+		writeJSON(w, http.StatusOK, map[string]any{"approved": 0, "skipped": []string{}})
 		return
 	}
 
-	tag, err := h.pool.Exec(r.Context(),
-		`UPDATE calibration_records
-		 SET status = 'approved', approved_at = now(), supervisor_id = $1, updated_at = now()
-		 WHERE id = ANY($2::uuid[]) AND tenant_id = $3 AND status = 'pending_approval'`,
-		userID, body.IDs, tenantID,
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.BulkApprove: begin transaction failed", "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	// Lock the pending candidates and count their readings in one pass.
+	rows, err := tx.Query(r.Context(),
+		`SELECT cr.id::text, cr.technician_id::text,
+		        (SELECT count(*) FROM calibration_measurements m WHERE m.record_id = cr.id),
+		        (SELECT count(*) FROM calibration_measurements m WHERE m.record_id = cr.id AND m.measured_value IS NULL)
+		 FROM calibration_records cr
+		 WHERE cr.id = ANY($1::uuid[]) AND cr.tenant_id = $2 AND cr.status = 'pending_approval'
+		 FOR UPDATE OF cr`,
+		body.IDs, tenantID,
 	)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "calibrations.BulkApprove: exec failed", "tenant_id", tenantID, "error", err)
+		slog.ErrorContext(r.Context(), "calibrations.BulkApprove: candidate query failed", "tenant_id", tenantID, "error", err)
+		writeDBError(w, err, "failed to bulk approve calibrations")
+		return
+	}
+	var eligible []string
+	for rows.Next() {
+		var recID, technicianID string
+		var total, blank int64
+		if err := rows.Scan(&recID, &technicianID, &total, &blank); err != nil {
+			rows.Close()
+			slog.ErrorContext(r.Context(), "calibrations.BulkApprove: candidate scan failed", "tenant_id", tenantID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
+			return
+		}
+		if role == "supervisor" && technicianID == userID {
+			continue // no self-approval for supervisors
+		}
+		if describeMeasurementProblem(total, blank) != "" {
+			continue
+		}
+		eligible = append(eligible, recID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.BulkApprove: candidate iteration failed", "tenant_id", tenantID, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
 		return
 	}
 
-	n := int(tag.RowsAffected())
-	slog.Info("calibrations.BulkApprove: records approved", "count", n, "tenant_id", tenantID, "supervisor_id", userID)
-	writeJSON(w, http.StatusOK, map[string]int{"approved": n})
+	type approvedRecord struct {
+		id, assetID string
+		performedAt time.Time
+	}
+	var approved []approvedRecord
+	if len(eligible) > 0 {
+		rows, err := tx.Query(r.Context(), approveRecordSQL,
+			eligible, tenantID, userID, time.Now().UTC(), "",
+		)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "calibrations.BulkApprove: exec failed", "tenant_id", tenantID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
+			return
+		}
+		for rows.Next() {
+			var a approvedRecord
+			if err := rows.Scan(&a.id, &a.assetID, &a.performedAt); err != nil {
+				rows.Close()
+				slog.ErrorContext(r.Context(), "calibrations.BulkApprove: scan failed", "tenant_id", tenantID, "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
+				return
+			}
+			approved = append(approved, a)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			slog.ErrorContext(r.Context(), "calibrations.BulkApprove: iteration failed", "tenant_id", tenantID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to bulk approve calibrations")
+			return
+		}
+
+		for _, a := range approved {
+			if _, err := tx.Exec(r.Context(), updateAssetDatesSQL, a.assetID, a.performedAt); err != nil {
+				slog.ErrorContext(r.Context(), "calibrations.BulkApprove: failed to update asset dates", "record_id", a.id, "asset_id", a.assetID, "error", err)
+				writeError(w, http.StatusInternalServerError, "failed to update asset calibration dates")
+				return
+			}
+		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.ErrorContext(r.Context(), "calibrations.BulkApprove: commit failed", "tenant_id", tenantID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to commit transaction")
+		return
+	}
+
+	done := make(map[string]bool, len(approved))
+	for _, a := range approved {
+		done[a.id] = true
+		go certificateEmailer(h.pool, r.Context(), a.id, tenantID)
+	}
+	skipped := []string{}
+	for _, id := range body.IDs {
+		if !done[strings.ToLower(id)] {
+			skipped = append(skipped, id)
+		}
+	}
+
+	slog.Info("calibrations.BulkApprove: records approved", "count", len(approved), "skipped", len(skipped), "tenant_id", tenantID, "supervisor_id", userID)
+	writeJSON(w, http.StatusOK, map[string]any{"approved": len(approved), "skipped": skipped})
 }
 
 // BulkDelete removes multiple calibration records.

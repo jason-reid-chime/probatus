@@ -39,6 +39,7 @@ export interface LocalCalibrationRecord {
   tech_signature?: string
   supervisor_signature?: string
   certificate_url?: string
+  certificate_number?: number | null  // human-readable cert # (e.g. 10001), assigned server-side on approval; not indexed
   notes?: string
   rejection_reason?: string | null
   updated_at: string

@@ -171,11 +171,19 @@ export default function CalibrationList() {
     setBulkLoading(true)
     setBulkError(null)
     try {
-      await apiRequest('POST', '/calibrations/bulk/approve', { ids: toApprove })
-      await Promise.all(toApprove.map(id =>
-        db.calibration_records.update(id, { status: 'approved', approved_at: new Date().toISOString() })
+      const res = await apiRequest<{ approved: number; skipped?: string[] }>(
+        'POST', '/calibrations/bulk/approve', { ids: toApprove })
+      // The server skips records with missing readings and a supervisor's own
+      // work; only mark what it actually approved.
+      const skipped = new Set(res?.skipped ?? [])
+      const approvedAt = new Date().toISOString()
+      await Promise.all(toApprove.filter(id => !skipped.has(id)).map(id =>
+        db.calibration_records.update(id, { status: 'approved', approved_at: approvedAt })
       ))
-      setSelected(new Set())
+      setSelected(skipped)
+      if (skipped.size > 0) {
+        setBulkError(`${skipped.size} of ${toApprove.length} not approved — they have missing readings or are your own calibrations. Open them to see why.`)
+      }
       queryClient.invalidateQueries({ queryKey: ['calibrations'] })
     } catch (err) {
       setBulkError(err instanceof Error ? err.message : 'Bulk approve failed')

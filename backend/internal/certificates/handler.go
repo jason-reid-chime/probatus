@@ -565,7 +565,7 @@ func (h *Handler) Generate(w http.ResponseWriter, r *http.Request) {
 		        COALESCE(unit,''), COALESCE(error_pct, 0),
 		        COALESCE(pass, false), COALESCE(notes,'')
 		 FROM calibration_measurements WHERE record_id = $1
-		 ORDER BY standard_value ASC NULLS LAST`,
+		 ORDER BY standard_value ASC NULLS LAST, point_label COLLATE "C"`,
 		id,
 	)
 	if err != nil {
@@ -787,7 +787,7 @@ func (h *Handler) loadCertData(r *http.Request, id, tenantID string) (certData, 
 		        COALESCE(standard_value, 0), COALESCE(measured_value, 0),
 		        COALESCE(unit,''), COALESCE(error_pct, 0),
 		        COALESCE(pass, false), COALESCE(notes,'')
-		 FROM calibration_measurements WHERE record_id = $1 ORDER BY standard_value ASC NULLS LAST`, id)
+		 FROM calibration_measurements WHERE record_id = $1 ORDER BY standard_value ASC NULLS LAST, point_label COLLATE "C"`, id)
 	if mRows != nil {
 		defer mRows.Close()
 		for mRows.Next() {

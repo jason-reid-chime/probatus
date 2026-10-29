@@ -11,6 +11,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { db, type LocalCalibrationRecord } from '../../lib/db'
 import { flushOutbox, retryFailed } from '../../lib/sync/outbox'
 import { overallResult, computeCombinedUncertainty } from '../../utils/calibrationMath'
+import { measurementsIncompleteReason, certificateFilename } from '../../utils/calibrationReadiness'
 import type { LocalMeasurement } from '../../lib/db'
 import DocumentsPanel from '../../components/documents/DocumentsPanel'
 import RecordHistory from '../../components/activity/RecordHistory'
@@ -330,19 +331,17 @@ export default function CalibrationDetail() {
     // the record's linked standards.
     const alignable = record!.status === 'in_progress' || record!.status === 'pending_approval'
     if (backendStatus !== null && backendStatus !== record!.status && alignable) {
+      // Status only: omitted fields keep their server values, so a sparse
+      // local copy can't wipe data here.
       await apiRequest('PUT', `/calibrations/${record!.id}`, {
-        status:         record!.status,
-        tech_signature: record!.tech_signature ?? '',
-        sales_number:   record!.sales_number   ?? '',
-        flag_number:    record!.flag_number     ?? '',
-        notes:          record!.notes          ?? '',
-        local_id:       record!.local_id       ?? '',
+        status: record!.status,
       })
     }
   }
 
   async function handleSubmitForApproval() {
     if (!record || !profile) return
+    if (measurementsIncompleteReason(measurements)) return
     setSubmitting(true)
     setSubmitError(null)
 
@@ -426,23 +425,35 @@ export default function CalibrationDetail() {
   const canSubmit = record.status === 'in_progress'
   const canApprove = record.status === 'pending_approval' && (profile?.role === 'supervisor' || profile?.role === 'admin')
   const canGeneratePdf = record.status === 'approved'
+  const incompleteReason = measurementsIncompleteReason(measurements)
   const canDelete = profile?.role === 'supervisor' || profile?.role === 'admin'
   const canEditCertUrl = profile?.role === 'supervisor' || profile?.role === 'admin'
 
   async function handleApprove() {
     if (!recordId || !profile) return
+    if (incompleteReason) return
     setApproving(true)
     setApproveError(null)
     try {
       await retryFailed()
       await flushOutbox()
       await ensureBackendRecord()
-      await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: supervisorSig })
+      const res = await apiRequest('POST', `/calibrations/${recordId}/approve`, { supervisor_signature: supervisorSig }) as
+        { certificate_number?: number | null } | undefined
+      // The server assigns the certificate number on approval. Use it if the
+      // response carries it; otherwise refetch the record to pick it up.
+      const certNo = typeof res?.certificate_number === 'number' ? res.certificate_number : undefined
+      const patch: Partial<LocalCalibrationRecord> = certNo !== undefined
+        ? { status: 'approved', certificate_number: certNo }
+        : { status: 'approved' }
       // Update Dexie so status persists on next visit
-      await db.calibration_records.update(recordId, { status: 'approved' })
+      await db.calibration_records.update(recordId, patch)
       queryClient.setQueryData(calibrationKeys.detail(recordId), (old: LocalCalibrationRecord | undefined) =>
-        old ? { ...old, status: 'approved' } : old
+        old ? { ...old, ...patch } : old
       )
+      if (certNo === undefined) {
+        void queryClient.invalidateQueries({ queryKey: calibrationKeys.detail(recordId) })
+      }
       setShowApproveModal(false)
       setSupervisorSig('')
     } catch (err) {
@@ -470,7 +481,7 @@ export default function CalibrationDetail() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `certificate-${recordId.slice(0, 8)}.pdf`
+      a.download = certificateFilename(record ?? { id: recordId })
       a.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -511,6 +522,11 @@ export default function CalibrationDetail() {
           <h1 className="text-xl font-bold text-gray-900">
             Calibration Record
           </h1>
+          {record.certificate_number != null && (
+            <p className="text-sm font-semibold text-gray-700 mt-0.5">
+              Certificate #{record.certificate_number}
+            </p>
+          )}
           <p className="text-sm text-gray-500 mt-0.5">{performedAt}</p>
           <div className="mt-1 flex flex-wrap items-center gap-3">
             <button
@@ -655,11 +671,15 @@ export default function CalibrationDetail() {
           <button
             type="button"
             onClick={handleSubmitForApproval}
-            disabled={submitting}
+            disabled={submitting || !!incompleteReason}
+            aria-describedby={incompleteReason ? 'calibration-incomplete-reason' : undefined}
             className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
           >
             {submitting ? 'Submitting…' : 'Submit for Approval'}
           </button>
+          {incompleteReason && (
+            <p id="calibration-incomplete-reason" className="text-sm text-gray-500 text-center">{incompleteReason}</p>
+          )}
           {submitError && (
             <p className="text-sm text-red-600 text-center">{submitError}</p>
           )}
@@ -672,11 +692,15 @@ export default function CalibrationDetail() {
           <button
             type="button"
             onClick={() => setShowApproveModal(true)}
-            disabled={approving}
+            disabled={approving || !!incompleteReason}
+            aria-describedby={incompleteReason ? 'calibration-incomplete-reason-approve' : undefined}
             className="w-full inline-flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-base rounded-xl min-h-[52px] px-6 py-3 transition-colors"
           >
             {approving ? 'Approving…' : 'Approve Calibration'}
           </button>
+          {incompleteReason && (
+            <p id="calibration-incomplete-reason-approve" className="text-sm text-gray-500 text-center">{incompleteReason}</p>
+          )}
           {approveError && <p className="text-sm text-red-600 text-center">{approveError}</p>}
         </div>
       )}
@@ -832,7 +856,7 @@ export default function CalibrationDetail() {
               <button
                 type="button"
                 onClick={handleApprove}
-                disabled={!supervisorSig || approving}
+                disabled={!supervisorSig || approving || !!incompleteReason}
                 className="flex-1 h-11 rounded-xl bg-green-600 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
                 {approving ? 'Approving…' : 'Confirm Approval'}

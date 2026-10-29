@@ -17,7 +17,9 @@ function sortMeasurements(measurements: LocalMeasurement[]): LocalMeasurement[] 
   return [...measurements].sort((a, b) => {
     const aVal = a.standard_value ?? Infinity
     const bVal = b.standard_value ?? Infinity
-    return aVal - bVal
+    // Tie-break by label so paired rows (e.g. pressure gauge "20 psi ↑" /
+    // "20 psi ↓") always list in the same order.
+    return aVal - bVal || a.point_label.localeCompare(b.point_label)
   })
 }
 
