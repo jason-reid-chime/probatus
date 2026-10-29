@@ -565,3 +565,99 @@ func TestFromWorkOrderTaxRateDefault(t *testing.T) {
 		t.Errorf("tax_rate 101: got %d", w.Code)
 	}
 }
+
+// updateTaxRateArg returns the UPDATE invoices call's SQL and its $8 (tax_rate) argument.
+func updateTaxRateArg(t *testing.T, db *testutil.FakeDB) (string, *float64) {
+	t.Helper()
+	for _, c := range db.Calls {
+		if strings.Contains(c.SQL, "UPDATE invoices SET customer_id") {
+			if len(c.Args) != 9 {
+				t.Fatalf("UPDATE invoices: %d args, want 9", len(c.Args))
+			}
+			rate, ok := c.Args[7].(*float64)
+			if !ok {
+				t.Fatalf("tax_rate arg is %T, want *float64", c.Args[7])
+			}
+			return c.SQL, rate
+		}
+	}
+	t.Fatal("no UPDATE invoices executed")
+	return "", nil
+}
+
+func TestUpdateTaxRate(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want *float64 // nil: the stored rate is kept
+	}{
+		{"omitted keeps stored rate", `{"lines":[{"description":"A","quantity":1}]}`, nil},
+		{"null keeps stored rate", `{"tax_rate":null}`, nil},
+		{"explicit 0 is kept", `{"tax_rate":0}`, f64(0)},
+		{"fractional rate is kept", `{"tax_rate":14.975}`, f64(14.975)},
+	}
+	for _, c := range cases {
+		db := testutil.New()
+		w := httptest.NewRecorder()
+		newH(db).Update(w, req("PUT", c.body, "admin", "inv-1"))
+		if w.Code != 200 || db.Committed != 1 {
+			t.Errorf("%s: got %d %s", c.name, w.Code, w.Body)
+			continue
+		}
+		sql, got := updateTaxRateArg(t, db)
+		if !strings.Contains(sql, "tax_rate = COALESCE($8::numeric, tax_rate)") {
+			t.Errorf("%s: tax_rate not coalesced with the stored rate: %s", c.name, sql)
+		}
+		switch {
+		case c.want == nil && got != nil:
+			t.Errorf("%s: tax_rate arg %v, want nil", c.name, *got)
+		case c.want != nil && (got == nil || *got != *c.want):
+			t.Errorf("%s: tax_rate arg %v, want %v", c.name, got, *c.want)
+		}
+	}
+
+	// Out-of-range rates are rejected before touching the database.
+	for _, body := range []string{`{"tax_rate":-1}`, `{"tax_rate":101}`} {
+		db := testutil.New()
+		w := httptest.NewRecorder()
+		newH(db).Update(w, req("PUT", body, "admin", "inv-1"))
+		if w.Code != 400 || !strings.Contains(w.Body.String(), "tax_rate") || len(db.Calls) != 0 {
+			t.Errorf("%s: got %d %s, %d calls", body, w.Code, w.Body, len(db.Calls))
+		}
+	}
+}
+
+func TestUpdateStatusEmailTenantName(t *testing.T) {
+	// Success: the subject names the tenant.
+	code, sent := sendEmail(t, statusDB("draft", "ops@city.example", lineRows()))
+	if code != 200 || len(sent) != 1 || sent[0].Subject != "Invoice #7 from Acme Cal" {
+		t.Fatalf("send: %d %+v", code, sent)
+	}
+
+	// Lookup failure (query error or missing tenant row): 500, nothing sent,
+	// invoice not marked sent.
+	for name, rule := range map[string]testutil.Rule{
+		"query error": {Match: "SELECT name FROM tenants", Err: errors.New("boom")},
+		"no row":      {Match: "SELECT name FROM tenants"},
+	} {
+		db := statusDB("draft", "ops@city.example", lineRows())
+		db.Rules = append([]testutil.Rule{rule}, db.Rules...)
+		var sent []email.EmailPayload
+		h := newH(db)
+		h.send = func(p email.EmailPayload) error { sent = append(sent, p); return nil }
+		w := httptest.NewRecorder()
+		h.UpdateStatus(w, req("PATCH", `{"status":"sent","email":true}`, "admin", "inv-1"))
+		if w.Code != 500 || !strings.Contains(w.Body.String(), "failed to load company name") {
+			t.Errorf("%s: got %d %s", name, w.Code, w.Body)
+		}
+		if len(sent) != 0 {
+			t.Errorf("%s: email sent without a company name: %+v", name, sent)
+		}
+		if n := db.Ran("UPDATE invoices"); n != 0 {
+			t.Errorf("%s: invoice status updated %d times", name, n)
+		}
+		if db.Ran("SELECT name FROM tenants") != 1 {
+			t.Errorf("%s: tenant lookup not attempted", name)
+		}
+	}
+}

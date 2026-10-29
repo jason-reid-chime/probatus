@@ -391,11 +391,6 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenantID := middleware.TenantIDFromCtx(ctx)
 	id := chi.URLParam(r, "id")
-	taxRate := 0.0 // an omitted tax_rate on update still means 0, as before
-	if in.TaxRate != nil {
-		taxRate = *in.TaxRate
-	}
-
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to update invoice")
@@ -405,10 +400,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	tag, err := tx.Exec(ctx,
 		`UPDATE invoices SET customer_id = $3::uuid, work_order_id = $4::uuid,
 		        issue_date = COALESCE(NULLIF($5, '')::date, issue_date), due_date = $6::date,
-		        currency = $7, tax_rate = $8, notes = $9, updated_at = now()
+		        currency = $7, tax_rate = COALESCE($8::numeric, tax_rate), notes = $9, updated_at = now()
 		 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'draft'`,
 		tenantID, id, in.CustomerID, in.WorkOrderID, in.IssueDate, in.DueDate,
-		strings.ToUpper(in.Currency), taxRate, in.Notes)
+		strings.ToUpper(in.Currency), in.TaxRate, in.Notes) // omitted tax_rate keeps the stored rate
 	if err != nil {
 		slog.ErrorContext(r.Context(), "invoices.Update: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to update invoice")
@@ -505,7 +500,12 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var tenantName string
-		h.pool.QueryRow(ctx, `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tenantName) //nolint:errcheck
+		if err := h.pool.QueryRow(ctx, `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tenantName); err != nil {
+			// Never email an invoice that doesn't say who it's from.
+			slog.ErrorContext(r.Context(), "invoices.UpdateStatus: tenant lookup failed", "tenant_id", tenantID, "error", err)
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to load company name")
+			return
+		}
 		billing, err := h.billingSettings(ctx, tenantID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "invoices.UpdateStatus: billing settings failed", "tenant_id", tenantID, "error", err)
