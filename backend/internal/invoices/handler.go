@@ -88,14 +88,53 @@ type Invoice struct {
 
 // input is the editable part of an invoice.
 type input struct {
-	CustomerID  *string `json:"customer_id"`
-	WorkOrderID *string `json:"work_order_id"`
-	IssueDate   string  `json:"issue_date"`
-	DueDate     *string `json:"due_date"`
-	Currency    string  `json:"currency"`
-	TaxRate     float64 `json:"tax_rate"`
-	Notes       *string `json:"notes"`
-	Lines       []Line  `json:"lines"`
+	CustomerID  *string  `json:"customer_id"`
+	WorkOrderID *string  `json:"work_order_id"`
+	IssueDate   string   `json:"issue_date"`
+	DueDate     *string  `json:"due_date"`
+	Currency    string   `json:"currency"`
+	TaxRate     *float64 `json:"tax_rate"` // nil (omitted or null) means the tenant's default on create
+	Notes       *string  `json:"notes"`
+	Lines       []Line   `json:"lines"`
+}
+
+// BillingSettings are a tenant's sales-tax details (billing_settings table).
+type BillingSettings struct {
+	TaxLabel       string  // e.g. "HST"
+	TaxNumber      *string // registration number, e.g. "123456789 RT0001"; nil when unset
+	DefaultTaxRate float64 // percent new invoices start with
+}
+
+// DefaultBillingSettings apply when a tenant has no billing_settings row.
+var DefaultBillingSettings = BillingSettings{TaxLabel: "HST", DefaultTaxRate: 13}
+
+// billingSettings loads the tenant's billing settings, falling back to the
+// defaults when there is no row (and, field by field, for a blank label or
+// tax number), matching the frontend's parseBilling.
+func (h *Handler) billingSettings(ctx context.Context, tenantID string) (BillingSettings, error) {
+	s := DefaultBillingSettings
+	var label, number *string
+	var rate *float64
+	err := h.pool.QueryRow(ctx,
+		`SELECT tax_label, tax_number, default_tax_rate::float8 FROM billing_settings WHERE tenant_id = $1`,
+		tenantID).Scan(&label, &number, &rate)
+	if err == pgx.ErrNoRows {
+		return s, nil
+	}
+	if err != nil {
+		return s, err
+	}
+	if label != nil && strings.TrimSpace(*label) != "" {
+		s.TaxLabel = strings.TrimSpace(*label)
+	}
+	if number != nil && strings.TrimSpace(*number) != "" {
+		n := strings.TrimSpace(*number)
+		s.TaxNumber = &n
+	}
+	if rate != nil {
+		s.DefaultTaxRate = *rate
+	}
+	return s, nil
 }
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
@@ -127,7 +166,7 @@ func (in *input) validate() string {
 	if len(in.Currency) != 3 {
 		return "currency must be a 3-letter code"
 	}
-	if in.TaxRate < 0 || in.TaxRate > 100 {
+	if in.TaxRate != nil && (*in.TaxRate < 0 || *in.TaxRate > 100) {
 		return "tax_rate must be between 0 and 100"
 	}
 	for i, l := range in.Lines {
@@ -264,10 +303,21 @@ func replaceLines(ctx context.Context, tx pgx.Tx, invoiceID string, lines []Line
 	return nil
 }
 
-// create inserts an invoice with the next number for the tenant.
+// create inserts an invoice with the next number for the tenant. A nil
+// TaxRate takes the tenant's default_tax_rate; an explicit 0 stays 0.
 func (h *Handler) create(ctx context.Context, in input) (string, error) {
 	tenantID := middleware.TenantIDFromCtx(ctx)
 	userID := middleware.UserIDFromCtx(ctx)
+	taxRate := 0.0
+	if in.TaxRate != nil {
+		taxRate = *in.TaxRate
+	} else {
+		bs, err := h.billingSettings(ctx, tenantID)
+		if err != nil {
+			return "", fmt.Errorf("load billing settings: %w", err)
+		}
+		taxRate = bs.DefaultTaxRate
+	}
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -290,7 +340,7 @@ func (h *Handler) create(ctx context.Context, in input) (string, error) {
 		         $2::uuid, $3::uuid, $4::date, $5::date, $6, $7, $8, NULLIF($9, '')::uuid)
 		 RETURNING id::text`,
 		tenantID, in.CustomerID, in.WorkOrderID, issue, in.DueDate, strings.ToUpper(in.Currency),
-		in.TaxRate, in.Notes, userID,
+		taxRate, in.Notes, userID,
 	).Scan(&id); err != nil {
 		return "", err
 	}
@@ -341,6 +391,10 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	tenantID := middleware.TenantIDFromCtx(ctx)
 	id := chi.URLParam(r, "id")
+	taxRate := 0.0 // an omitted tax_rate on update still means 0, as before
+	if in.TaxRate != nil {
+		taxRate = *in.TaxRate
+	}
 
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
@@ -354,7 +408,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		        currency = $7, tax_rate = $8, notes = $9, updated_at = now()
 		 WHERE tenant_id = $1 AND id = $2::uuid AND status = 'draft'`,
 		tenantID, id, in.CustomerID, in.WorkOrderID, in.IssueDate, in.DueDate,
-		strings.ToUpper(in.Currency), in.TaxRate, in.Notes)
+		strings.ToUpper(in.Currency), taxRate, in.Notes)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "invoices.Update: failed", "error", err)
 		httputil.WriteError(w, http.StatusInternalServerError, "failed to update invoice")
@@ -452,11 +506,17 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		var tenantName string
 		h.pool.QueryRow(ctx, `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tenantName) //nolint:errcheck
+		billing, err := h.billingSettings(ctx, tenantID)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "invoices.UpdateStatus: billing settings failed", "tenant_id", tenantID, "error", err)
+			httputil.WriteError(w, http.StatusInternalServerError, "failed to load billing settings")
+			return
+		}
 		if err := h.send(email.EmailPayload{
 			From:    fromAddress(),
 			To:      []string{*inv.CustomerEmail},
 			Subject: fmt.Sprintf("Invoice #%d from %s", inv.Number, tenantName),
-			Html:    InvoiceEmailHTML(inv, tenantName),
+			Html:    InvoiceEmailHTML(inv, tenantName, billing),
 		}); err != nil {
 			slog.ErrorContext(r.Context(), "invoices.UpdateStatus: email failed", "invoice_id", id, "error", err)
 			httputil.WriteError(w, http.StatusBadGateway, "failed to email the invoice: "+err.Error())
@@ -480,15 +540,16 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 // FromWorkOrder creates a draft invoice for a work order: one line per
 // instrument, linked to its latest approved calibration. Body (optional):
 // {"unit_price": 85, "tax_rate": 13, "currency": "CAD", "due_days": 30}.
+// Without tax_rate the tenant's billing_settings.default_tax_rate applies.
 func (h *Handler) FromWorkOrder(w http.ResponseWriter, r *http.Request) {
 	if !requireManager(w, r) {
 		return
 	}
 	var body struct {
-		UnitPrice float64 `json:"unit_price"`
-		TaxRate   float64 `json:"tax_rate"`
-		Currency  string  `json:"currency"`
-		DueDays   int     `json:"due_days"`
+		UnitPrice float64  `json:"unit_price"`
+		TaxRate   *float64 `json:"tax_rate"` // omitted or null: the tenant's default_tax_rate
+		Currency  string   `json:"currency"`
+		DueDays   int      `json:"due_days"`
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -587,14 +648,19 @@ func fromAddress() string {
 	return "Probatus <noreply@probatus.app>"
 }
 
-// InvoiceEmailHTML renders an invoice as a self-contained HTML email.
-func InvoiceEmailHTML(inv *Invoice, tenantName string) string {
+// InvoiceEmailHTML renders an invoice as a self-contained HTML email. The tax
+// row and the registration number under the company name come from billing.
+func InvoiceEmailHTML(inv *Invoice, tenantName string, billing BillingSettings) string {
 	var b strings.Builder
 	esc := html.EscapeString
 	money := func(v float64) string { return fmt.Sprintf("%s %.2f", inv.Currency, v) }
 	fmt.Fprintf(&b, `<div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:640px">
-<h2 style="margin:0 0 4px">Invoice #%d</h2><p style="margin:0 0 16px;color:#555">%s</p>
-<p>Issued %s`, inv.Number, esc(tenantName), esc(inv.IssueDate))
+<h2 style="margin:0 0 4px">Invoice #%d</h2><p style="margin:0 0 16px;color:#555">%s`, inv.Number, esc(tenantName))
+	if billing.TaxNumber != nil && *billing.TaxNumber != "" {
+		fmt.Fprintf(&b, `<br><span style="font-size:13px">%s # %s</span>`, esc(billing.TaxLabel), esc(*billing.TaxNumber))
+	}
+	fmt.Fprintf(&b, `</p>
+<p>Issued %s`, esc(inv.IssueDate))
 	if inv.DueDate != nil {
 		fmt.Fprintf(&b, ` · Due %s`, esc(*inv.DueDate))
 	}
@@ -608,9 +674,9 @@ func InvoiceEmailHTML(inv *Invoice, tenantName string) string {
 			esc(l.Description), l.Quantity, money(l.UnitPrice), money(l.Amount))
 	}
 	fmt.Fprintf(&b, `<tr><td colspan="3" align="right" style="padding:6px">Subtotal</td><td align="right" style="padding:6px">%s</td></tr>
-<tr><td colspan="3" align="right" style="padding:6px">Tax (%g%%)</td><td align="right" style="padding:6px">%s</td></tr>
+<tr><td colspan="3" align="right" style="padding:6px">%s (%g%%)</td><td align="right" style="padding:6px">%s</td></tr>
 <tr><td colspan="3" align="right" style="padding:6px"><strong>Total</strong></td><td align="right" style="padding:6px"><strong>%s</strong></td></tr></table>`,
-		money(inv.Subtotal), inv.TaxRate, money(inv.Tax), money(inv.Total))
+		money(inv.Subtotal), esc(billing.TaxLabel), inv.TaxRate, money(inv.Tax), money(inv.Total))
 	if inv.Notes != nil && *inv.Notes != "" {
 		fmt.Fprintf(&b, `<p style="color:#555;white-space:pre-wrap">%s</p>`, esc(*inv.Notes))
 	}
