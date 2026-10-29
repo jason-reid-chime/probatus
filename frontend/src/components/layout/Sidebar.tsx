@@ -18,7 +18,7 @@ import {
   ScrollText,
   BarChart3,
   Receipt,
-  BellRing,
+  BellRing, Landmark,
 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth'
@@ -86,6 +86,7 @@ const navSections: NavSection[] = [
       { to: '/invoices', label: 'Invoices', Icon: Receipt, roles: ['supervisor', 'admin'] },
       { to: '/analytics', label: 'Analytics', Icon: BarChart3, roles: ['supervisor', 'admin'] },
       { to: '/settings/alerts', label: 'Due Alerts', Icon: BellRing, roles: ['supervisor', 'admin'] },
+      { to: '/settings/billing', label: 'Billing', Icon: Landmark, roles: ['supervisor', 'admin'] },
     ],
   },
   {

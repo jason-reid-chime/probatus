@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Receipt, Loader2 } from 'lucide-react'
 import { invoiceFromWorkOrder } from '../../lib/api/invoices'
 import { ApiError } from '../../lib/api/client'
+import { useBillingSettings } from '../../lib/api/billing'
 
 const inputClass = 'w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500'
 
@@ -10,7 +11,14 @@ const inputClass = 'w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-
 export default function CreateInvoicePanel({ workOrderId, assetCount }: { workOrderId: string; assetCount: number }) {
   const navigate = useNavigate()
   const [unitPrice, setUnitPrice] = useState('')
-  const [taxRate, setTaxRate] = useState('13')
+  const billing = useBillingSettings()
+  const [taxRate, setTaxRate] = useState(String(billing.data?.default_tax_rate ?? 13))
+  // Start from the tenant's default rate once settings load.
+  const [defaultRateApplied, setDefaultRateApplied] = useState(!!billing.data)
+  if (billing.data && !defaultRateApplied) {
+    setDefaultRateApplied(true)
+    setTaxRate(String(billing.data.default_tax_rate))
+  }
   const [currency, setCurrency] = useState('CAD')
   const [dueDays, setDueDays] = useState('30')
   const [busy, setBusy] = useState(false)

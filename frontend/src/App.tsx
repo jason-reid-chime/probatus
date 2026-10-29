@@ -38,6 +38,7 @@ import AnalyticsPage from './pages/analytics/Analytics'
 import InvoicesList from './pages/invoices/InvoicesList'
 import InvoiceDetail from './pages/invoices/InvoiceDetail'
 import AlertSettings from './pages/settings/AlertSettings'
+import BillingSettings from './pages/settings/BillingSettings'
 import AssetLabels from './pages/assets/AssetLabels'
 import { OUTBOX_FLUSHED_EVENT } from './lib/sync/outbox'
 
@@ -115,6 +116,7 @@ export default function App() {
               <Route path="invoices" element={<InvoicesList />} />
               <Route path="invoices/:id" element={<InvoiceDetail />} />
               <Route path="settings/alerts" element={<AlertSettings />} />
+              <Route path="settings/billing" element={<BillingSettings />} />
               <Route path="dashboard" element={<Navigate to="/" replace />} />
               <Route path="*" element={<NotFound />} />
             </Route>

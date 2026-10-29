@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Plus, Printer, Trash2, Loader2, Send, CheckCircle2, Ban, Pencil } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../hooks/useAuth'
+import { useBillingSettings } from '../../lib/api/billing'
 import {
   type Invoice,
   type InvoiceInput,
@@ -63,9 +64,17 @@ export default function InvoiceDetail() {
     },
   })
 
+  const billing = useBillingSettings()
   const [form, setForm] = useState<InvoiceInput | null>(
-    isNew ? { customer_id: null, due_date: null, currency: 'CAD', tax_rate: 0, notes: null, lines: [emptyLine()] } : null,
+    isNew ? { customer_id: null, due_date: null, currency: 'CAD', tax_rate: billing.data?.default_tax_rate ?? 0, notes: null, lines: [emptyLine()] } : null,
   )
+  // A new invoice starts at the tenant's default rate once settings load
+  // (adjusted during render, so it lands before the first paint).
+  const [defaultRateApplied, setDefaultRateApplied] = useState(!!billing.data)
+  if (isNew && form && billing.data && !defaultRateApplied) {
+    setDefaultRateApplied(true)
+    setForm({ ...form, tax_rate: billing.data.default_tax_rate })
+  }
   const [editing, setEditing] = useState(isNew)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -154,6 +163,9 @@ export default function InvoiceDetail() {
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-lg font-black tracking-wide text-brand-700">{tenant.data || 'Invoice'}</p>
+            {billing.data?.tax_number && (
+              <p className="text-xs text-gray-600">{billing.data.tax_label} # {billing.data.tax_number}</p>
+            )}
             <h1 className="mt-1 text-2xl font-bold text-gray-900">{isNew ? 'New invoice' : `Invoice #${inv!.number}`}</h1>
             {!isNew && <div className="mt-1 print:hidden"><InvoiceStatusBadge status={status} /></div>}
           </div>
@@ -221,7 +233,7 @@ export default function InvoiceDetail() {
         <div className="ml-auto w-full max-w-xs space-y-1 text-sm">
           <div className="flex justify-between"><span className="text-gray-500">Subtotal</span><span className="tabular-nums">{formatMoney(totals.subtotal, form.currency)}</span></div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-gray-500">Tax {editing ? '' : `(${form.tax_rate}%)`}</span>
+            <span className="text-gray-500">{billing.data?.tax_label ?? 'Tax'} {editing ? '' : `(${form.tax_rate}%)`}</span>
             {editing && (
               <span className="flex items-center gap-1">
                 <input aria-label="Tax rate percent" type="number" min={0} max={100} step="0.001" className={`${inputClass} w-20 text-right`} value={form.tax_rate} onChange={(e) => patch({ tax_rate: Number(e.target.value) })} />%
